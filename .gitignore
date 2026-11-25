@@ -1,0 +1,17 @@
+# Local AI-assistant skill trees: installed per machine, not part of the project
+.claude/skills/
+.cursor/skills/
+.github/skills/
+.agents/skills/
+.devin/skills/
+.gemini/skills/
+.ai/skills/
+
+# Private planning workspace and reference material: local only, never commit
+context/
+reference/
+
+# Local course tooling state and rules
+.10x-cli.json
+**/.10x-cli-manifest.json
+.cursor/rules/10x-course.mdc

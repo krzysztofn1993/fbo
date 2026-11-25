@@ -30,18 +30,27 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `npm run dev` starts the development server on port 3000.
 - `npm run lint` runs ESLint with the presets in `@eslint.config.mjs`.
 - `npm run build` creates the production build and runs the type check.
+- `npm test` runs the Vitest suite once; `npm run test:watch` reruns it on change.
+- `npm run verify` runs lint, then build, then tests, and stops at the first failure.
 
-Run `npm run lint` and `npm run build` before every commit; both must exit 0. There is no CI yet, so this local run is the gate.
+Run `npm run verify` before every commit; it must exit 0. GitHub Actions runs the same command on every push and pull request.
 
 ## Coding Style
 
 - TypeScript runs in `strict` mode; do not relax compiler options in `@tsconfig.json` to make a build pass.
 - Use npm only; `package-lock.json` is the single lockfile.
 - Keep `next` and `eslint-config-next` on the same exact version, and `react` and `react-dom` likewise, as pinned in `@package.json`.
+- Pin new and updated dependencies and GitHub actions to an exact version: the highest semver in the chosen major line published at least 14×24 h earlier. Pin actions to the full commit SHA with the version in a trailing comment.
+- The Node.js version in `@.nvmrc` is the exception: it is pinned to the major only.
+- Represent money as `bigint` in the smallest currency unit, never as `number`; this is why `target` in `@tsconfig.json` is ES2020.
 
 ## Testing
 
-No test runner or `test` script exists yet. Until one is added, verify changes with lint and build, and report it that way instead of claiming tests passed.
+- Vitest runs in a Node environment, configured in `@vitest.config.mts`.
+- Tests live next to the code as `src/**/*.test.ts`; files elsewhere or with other names are not collected.
+- Import code under test through the `@/` alias.
+- Component tests need jsdom and Testing Library; add them in the change that first needs them.
+- Report only tests that actually ran.
 
 ## Commits
 

@@ -8,7 +8,7 @@ application scaffold.
 
 ## Requirements
 
-- Node.js 20.9 or newer (developed on Node.js 24)
+- Node.js 26 (the version is pinned in `.nvmrc`)
 - npm
 
 ## Getting started
@@ -22,12 +22,15 @@ The development server listens on http://localhost:3000.
 
 ## Scripts
 
-| Command         | What it does                        |
-| --------------- | ----------------------------------- |
-| `npm run dev`   | Start the development server        |
-| `npm run build` | Create a production build           |
-| `npm run start` | Serve the production build          |
-| `npm run lint`  | Check the code with ESLint          |
+| Command              | What it does                        |
+| -------------------- | ----------------------------------- |
+| `npm run dev`        | Start the development server        |
+| `npm run build`      | Create a production build           |
+| `npm run start`      | Serve the production build          |
+| `npm run lint`       | Check the code with ESLint          |
+| `npm test`           | Run the test suite once             |
+| `npm run test:watch` | Rerun the tests on every change     |
+| `npm run verify`     | Run lint, build and tests in order  |
 
 ## Stack
 

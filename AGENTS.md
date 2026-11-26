@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-FBO is a self-hosted household finance web app. Stack: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, npm. The repository currently holds only the application scaffold.
+FBO is a self-hosted household finance web app. Stack: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, npm. The repository holds the application scaffold, the first domain rule (split totals in `src/lib/money/`) with its tests, and the CI gate; there are no user-facing features yet.
 
 ## Hard Rules
 

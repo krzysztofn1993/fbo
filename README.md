@@ -3,8 +3,9 @@
 FBO is a self-hosted household finance app. It runs as a single instance on
 your own machine.
 
-The project is at an early stage: this repository currently holds the
-application scaffold.
+The project is at an early stage: this repository holds the application
+scaffold, a first domain rule with its tests, and a CI check. There are no
+user-facing features yet.
 
 ## Requirements
 

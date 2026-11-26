@@ -77,10 +77,15 @@ Behind a reverse proxy, forward the original `Host` header or set
 | `npm run build`              | Create a production build                        |
 | `npm run start`              | Serve the production build                       |
 | `npm run lint`               | Check the code with ESLint                       |
-| `npm test`                   | Run the test suite once                          |
-| `npm run test:watch`         | Rerun the tests on every change                  |
-| `npm run verify`             | Run lint, build and tests in order               |
+| `npm test`                   | Run the unit tests once                          |
+| `npm run test:watch`         | Rerun the unit tests on every change             |
+| `npm run test:e2e`           | Run the browser tests on the production build    |
+| `npm run verify`             | Run lint, build, unit and browser tests in order |
 | `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line             |
+
+`npm run test:e2e` starts the production build on port 3100 with a test-only
+account, so run `npm run build` first. The first run needs the browser:
+`npx playwright install chromium`.
 
 ## Stack
 

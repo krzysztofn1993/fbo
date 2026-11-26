@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-FBO is a self-hosted household finance web app. Stack: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, npm. The repository holds the application scaffold, the first domain rule (split totals in `src/lib/money/`) with its tests, and the CI gate; there are no user-facing features yet.
+FBO is a self-hosted household finance web app. Stack: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, npm. The repository holds the application scaffold, sign-in for the single administrator (`src/lib/auth/`, `src/proxy.ts`, `src/app/login/`), the first domain rule (split totals in `src/lib/money/`), their tests, and the CI gate.
 
 ## Hard Rules
 
@@ -31,7 +31,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `npm run lint` runs ESLint with the presets in `@eslint.config.mjs`.
 - `npm run build` creates the production build and runs the type check.
 - `npm test` runs the Vitest suite once; `npm run test:watch` reruns it on change.
-- `npm run verify` runs lint, then build, then tests, and stops at the first failure.
+- `npm run test:e2e` runs the Playwright suite against the production build; run `npm run build` first.
+- `npm run auth:hash-password` reads a password (twice on a terminal, one line from a pipe) and prints the `ADMIN_PASSWORD_HASH=` line.
+- `npm run verify` runs lint, then build, then unit tests, then E2E tests, and stops at the first failure.
 
 Run `npm run verify` before every commit; it must exit 0. GitHub Actions runs the same command on every push and pull request.
 
@@ -47,9 +49,11 @@ Run `npm run verify` before every commit; it must exit 0. GitHub Actions runs th
 ## Testing
 
 - Vitest runs in a Node environment, configured in `@vitest.config.mts`.
-- Tests live next to the code as `src/**/*.test.ts`; files elsewhere or with other names are not collected.
+- Unit tests live next to the code as `src/**/*.test.ts`; files elsewhere or with other names are not collected.
 - Import code under test through the `@/` alias.
 - Component tests need jsdom and Testing Library; add them in the change that first needs them.
+- E2E tests live in `e2e/*.spec.ts` and run in Playwright with Chromium only, configured in `@playwright.config.ts`. They start `next start` on port 3100, so they need a prior `npm run build`, and pass the server a test-only account and a random session secret, overriding any local `.env.local`.
+- `e2e/fixtures/` holds only test data; never put a real account or secret there.
 - Report only tests that actually ran.
 
 ## Commits

@@ -31,10 +31,17 @@ function askHidden(prompt: string): Promise<string> {
     const rl = createInterface({ input: process.stdin, output: muted, terminal: true });
     let answered = false;
 
-    rl.on("SIGINT", () => {
+    // Closing the interface also takes the terminal out of raw mode, so echo
+    // comes back even when the process is stopped by a signal mid-prompt.
+    const stop = (): void => {
       rl.close();
-    });
+    };
+    rl.on("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    process.once("SIGHUP", stop);
     rl.on("close", () => {
+      process.removeListener("SIGTERM", stop);
+      process.removeListener("SIGHUP", stop);
       process.stderr.write("\n");
       if (!answered) {
         reject(new InterruptedError());

@@ -37,11 +37,13 @@ secret come from environment variables:
 Generate the password hash and the secret:
 
 ```bash
-npm run auth:hash-password   # asks for the password twice, 15 to 256 characters
-openssl rand -base64 32      # prints a value for SESSION_SECRET
+npm run -s auth:hash-password   # asks for the password twice, 15 to 256 characters
+openssl rand -base64 32         # prints a value for SESSION_SECRET
 ```
 
-The hash command prints a ready `ADMIN_PASSWORD_HASH=...` line. Put the values
+The hash command prints a ready `ADMIN_PASSWORD_HASH=...` line. Keep the `-s`
+flag when you redirect it into a file: without it npm adds its own lines to
+the output. Put the values
 in `.env.local` in the project root, which Git ignores, or pass them to the
 process in your deployment. Without a complete and valid configuration every
 page except the sign-in screen redirects to it, the form reports that sign-in
@@ -50,7 +52,9 @@ values).
 
 A session ends after one hour without activity or twelve hours after sign-in.
 Changing the password, the username or `SESSION_SECRET` signs the
-administrator out everywhere. After three failed sign-ins in a row each further
+administrator out everywhere. Signing out ends the session only in that
+browser: a copy of its cookie stays valid until one of those limits is
+reached. After three failed sign-ins in a row each further
 attempt has to wait, starting at one second and doubling up to a minute; a
 successful sign-in or a server restart resets the wait.
 
@@ -68,6 +72,11 @@ not do this on an instance reachable from the internet.
 Behind a reverse proxy, forward the original `Host` header or set
 `X-Forwarded-Host`. Server Actions, including sign-in and sign-out, compare the
 `Origin` of each request with that host and reject requests that do not match.
+
+Do not let the reverse proxy or a CDN cache the app's pages. Some responses,
+such as the sign-in page, are sent with a long `s-maxage` because Next.js
+prerenders them, and a shared cache would keep serving an old copy after an
+update. Cache only the files under `/_next/static/`.
 
 ## Scripts
 

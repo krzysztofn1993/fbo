@@ -1,11 +1,16 @@
 // Checks the session on every request before any route renders.
 //
 // The session needs no database, so this is the full check (the same rules
-// as the data access layer), not only an optimistic one: a visitor without a
-// valid session never gets past this point except to the public paths. It is
-// also where activity refreshes the session cookie, because Server Components
+// as the data access layer), not only an optimistic one: a page request
+// without a valid session is redirected to the sign-in screen. It is also
+// where activity refreshes the session cookie, because Server Components
 // cannot set cookies. Server Actions are POST requests to the page that uses
 // them, so they pass through here too and count as activity.
+//
+// This is not the only guard. A Server Action can still be posted to a public
+// path such as /login without a session, and a browser repeats a POST after a
+// 307 redirect. Every page and Server Action that touches data must therefore
+// call `verifySession()` from the data access layer itself.
 //
 // This file must not import `server-only`: Proxy is not built with the
 // `react-server` condition.
@@ -41,6 +46,12 @@ function warnIfInsecure(config: AuthConfig): void {
   console.warn(
     "SESSION_COOKIE_SECURE=false: the session cookie is sent without Secure and without the __Host- prefix. Use this only on a trusted network without HTTPS.",
   );
+}
+
+const STATIC_FILE = /\.[A-Za-z0-9]+$/;
+
+function isStaticFile(pathname: string): boolean {
+  return STATIC_FILE.test(pathname);
 }
 
 function redirectTo(request: NextRequest, path: string): NextResponse {
@@ -85,7 +96,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   }
 
   const response = NextResponse.next();
-  if (needsRefresh(session, now)) {
+  // Files from public/ (anything with an extension) are still guarded, but
+  // they do not refresh the session, so their responses carry no cookie.
+  if (!isStaticFile(request.nextUrl.pathname) && needsRefresh(session, now)) {
     const value = await sealSession(touch(session, now), authConfig.sessionSecret);
     response.cookies.set({ ...options, value });
   }
@@ -93,5 +106,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Skips only build assets, the image optimizer and the favicon; each name
+  // is matched exactly, so a path that merely starts with one still runs here.
+  matcher: ["/((?!_next/static/|_next/image$|favicon\\.ico$).*)"],
 };

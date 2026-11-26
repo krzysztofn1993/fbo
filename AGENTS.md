@@ -52,7 +52,7 @@ Run `npm run verify` before every commit; it must exit 0. GitHub Actions runs th
 - Unit tests live next to the code as `src/**/*.test.ts`; files elsewhere or with other names are not collected.
 - Import code under test through the `@/` alias.
 - Component tests need jsdom and Testing Library; add them in the change that first needs them.
-- E2E tests live in `e2e/*.spec.ts` and run in Playwright with Chromium only, configured in `@playwright.config.ts`. They start `next start` on port 3100, so they need a prior `npm run build`, and pass the server a test-only account and a random session secret, overriding any local `.env.local`.
+- E2E tests live in `e2e/*.spec.ts` and run in Playwright with Chromium only, configured in `@playwright.config.ts`. They start `next start` on port 3100, so they need a prior `npm run build`, and pass the server a test-only account and a random session secret. These four variables take precedence over a local `.env.local`, but any other variable set there still reaches the server, and outside CI a server already listening on port 3100 is reused.
 - `e2e/fixtures/` holds only test data; never put a real account or secret there.
 - Report only tests that actually ran.
 

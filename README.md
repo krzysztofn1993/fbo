@@ -56,7 +56,12 @@ administrator out everywhere. Signing out ends the session only in that
 browser: a copy of its cookie stays valid until one of those limits is
 reached. After three failed sign-ins in a row each further
 attempt has to wait, starting at one second and doubling up to a minute; a
-successful sign-in or a server restart resets the wait.
+successful sign-in or a server restart resets the wait. The wait is shared by
+everyone who reaches the sign-in page, so anyone who can open it can keep the
+administrator waiting by sending a wrong password about once a minute. Put the
+instance behind an access gateway that admits only people you know (for
+example an identity-aware proxy or a VPN), and make sure the app cannot be
+reached around it.
 
 ### HTTPS
 

@@ -4,18 +4,21 @@ FBO is a self-hosted household finance app. It runs as a single instance on
 your own machine.
 
 The project is at an early stage: this repository holds the application
-scaffold, sign-in for the single administrator, a first domain rule with its
-tests, and a CI check.
+scaffold, sign-in for the single administrator, a first domain rule, the
+database schema for accounts and categories, their tests, and a CI check.
 
 ## Requirements
 
 - Node.js 26 (the version is pinned in `.nvmrc`)
 - npm
+- Docker with Compose, for the local PostgreSQL (see [Database](#database))
 
 ## Getting started
 
 ```bash
 npm install
+docker compose up -d
+npm run db:migrate
 npm run dev
 ```
 
@@ -33,6 +36,7 @@ secret come from environment variables:
 | `ADMIN_PASSWORD_HASH`   | yes      | Hash of the administrator password, printed by `npm run auth:hash-password` |
 | `SESSION_SECRET`        | yes      | Key that encrypts the session cookie, at least 32 characters                |
 | `SESSION_COOKIE_SECURE` | no       | `true` (default) or `false`; see [HTTPS](#https) below                      |
+| `DATABASE_URL`          | yes      | PostgreSQL connection URL; see [Database](#database) below                  |
 
 Generate the password hash and the secret:
 
@@ -83,19 +87,51 @@ such as the sign-in page, are sent with a long `s-maxage` because Next.js
 prerenders them, and a shared cache would keep serving an old copy after an
 update. Cache only the files under `/_next/static/`.
 
+## Database
+
+FBO keeps its data in PostgreSQL 18. For development, `compose.yaml` runs one
+in Docker on `127.0.0.1:5433`, a port chosen so that it does not collide with
+a server on the default 5432. Its user, password and database are all `fbo`;
+the password is for this local database only. Add the URL to `.env.local`:
+
+```bash
+DATABASE_URL=postgres://fbo:fbo@127.0.0.1:5433/fbo
+```
+
+Then start the server and create the schema:
+
+```bash
+docker compose up -d   # start PostgreSQL in the background
+npm run db:migrate     # apply the migrations the database does not have yet
+```
+
+`npm run db:migrate` applies the SQL migrations from `drizzle/` in order and
+skips those already applied, so running it again changes nothing. Run it after
+every update that brings new migrations. The data lives in a named Docker
+volume: `docker compose down` keeps it, `docker compose down -v` deletes it.
+
+The database tests in `npm test` and `npm run verify` need the server running.
+They use their own databases, `fbo_test` and `fbo_test_legacy` on the same
+server, which they create when missing and empty on every run; set
+`TEST_DATABASE_URL` and `TEST_LEGACY_DATABASE_URL` to use others. The test
+setup refuses any database whose name does not end in `_test`, `_test_legacy`
+or `_e2e`, so it cannot empty the development database by mistake.
+
 ## Scripts
 
-| Command                      | What it does                                     |
-| ---------------------------- | ------------------------------------------------ |
-| `npm run dev`                | Start the development server                     |
-| `npm run build`              | Create a production build                        |
-| `npm run start`              | Serve the production build                       |
-| `npm run lint`               | Check the code with ESLint                       |
-| `npm test`                   | Run the unit tests once                          |
-| `npm run test:watch`         | Rerun the unit tests on every change             |
-| `npm run test:e2e`           | Run the browser tests on the production build    |
-| `npm run verify`             | Run lint, build, unit and browser tests in order |
-| `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line             |
+| Command                      | What it does                                               |
+| ---------------------------- | ---------------------------------------------------------- |
+| `npm run dev`                | Start the development server                               |
+| `npm run build`              | Create a production build                                  |
+| `npm run start`              | Serve the production build                                 |
+| `npm run lint`               | Check the code with ESLint                                 |
+| `npm test`                   | Run the unit and database tests once                       |
+| `npm run test:watch`         | Rerun the unit and database tests on every change          |
+| `npm run test:e2e`           | Run the browser tests on the production build              |
+| `npm run verify`             | Run lint, build, unit, database and browser tests in order |
+| `npm run db:migrate`         | Apply pending migrations to `DATABASE_URL`                 |
+| `npm run db:generate`        | Write a migration for changes in the schema                |
+| `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line                       |
 
 `npm run test:e2e` starts the production build on port 3100 with a test-only
 account, so run `npm run build` first. The first run needs the browser:
@@ -103,4 +139,5 @@ account, so run `npm run build` first. The first run needs the browser:
 
 ## Stack
 
-Next.js (App Router), React, TypeScript and Tailwind CSS.
+Next.js (App Router), React, TypeScript and Tailwind CSS; PostgreSQL with
+Drizzle ORM and node-postgres.

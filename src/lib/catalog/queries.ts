@@ -9,6 +9,7 @@ import { asc } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { accounts, categories } from "../db/schema.ts";
+import type { CategoryId } from "../ids.ts";
 
 type Account = typeof accounts.$inferSelect;
 type Category = typeof categories.$inferSelect;
@@ -54,7 +55,7 @@ export async function listCategoryTree(db: NodePgDatabase): Promise<RootCategory
     .orderBy(asc(categories.position), asc(categories.id));
 
   const roots: RootCategoryNode[] = [];
-  const rootsById = new Map<string, RootCategoryNode>();
+  const rootsById = new Map<CategoryId, RootCategoryNode>();
   for (const { parentId, ...node } of rows) {
     if (parentId === null) {
       const root = { ...node, children: [] };

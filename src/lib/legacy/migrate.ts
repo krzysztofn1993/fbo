@@ -11,7 +11,7 @@ import pg from "pg";
 
 import { type MigrationReport, translateAccountsAndCategories } from "./accounts-categories.ts";
 import { readCategoryLayoutFile } from "./category-layout.ts";
-import { type LegacySnapshot, readLegacySnapshot } from "./read.ts";
+import { type LegacySnapshotResult, readLegacySnapshot } from "./read.ts";
 import { AlreadyMigratedError, writeMigrationPlan } from "./write.ts";
 
 export type MigrationOptions = {
@@ -24,7 +24,7 @@ export type MigrationOutcome =
   | { status: "migrated"; report: MigrationReport }
   /** Refused before writing anything: same database on both sides, or already migrated. */
   | { status: "refused"; message: string }
-  /** The layout file or the old data break a rule; every problem is listed. */
+  /** The layout file or the old data break a rule or have an unexpected shape; every problem is listed. */
   | { status: "invalid"; problems: string[] }
   /** A connection or database error. */
   | { status: "failed"; message: string };
@@ -100,10 +100,10 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
   const legacy = new pg.Client({ connectionString: options.legacyDatabaseUrl });
   const legacyErrors = connectionErrorTrap();
   legacy.on("error", legacyErrors.listener);
-  let snapshot: LegacySnapshot;
+  let read: LegacySnapshotResult;
   try {
     await legacy.connect();
-    snapshot = await readLegacySnapshot(legacy);
+    read = await readLegacySnapshot(legacy);
   } catch (error) {
     return {
       status: "failed",
@@ -113,7 +113,11 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
     await legacy.end().catch(() => undefined);
   }
 
-  const translation = translateAccountsAndCategories({ ...snapshot, layout: layout.layout });
+  if (!read.ok) {
+    return { status: "invalid", problems: read.problems };
+  }
+
+  const translation = translateAccountsAndCategories({ ...read.snapshot, layout: layout.layout });
   if (!translation.ok) {
     return { status: "invalid", problems: translation.problems };
   }

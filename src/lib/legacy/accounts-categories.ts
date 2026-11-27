@@ -6,20 +6,45 @@
 // by the old ID of its leading row, the oldest of the rows it was made from,
 // and lists every old ID it replaces for the legacy maps.
 //
+// The rows arrive with their shape already checked (see `read.ts`); the values
+// that must fit the new schema (enums, currency) are checked here by Zod
+// schemas, only on the rows that are migrated, so every problem is reported.
+//
 // Loaded by the `legacy:migrate` script under plain `node`, so it imports only
 // packages and relative `.ts` paths and uses only erasable syntax.
 
-import { accountType, categoryKind, reportingScope } from "../db/schema.ts";
-import { type CategoryLayout, type LayoutRoot, normalizeCategoryName } from "./category-layout.ts";
+import { z } from "zod";
 
-export type AccountType = (typeof accountType.enumValues)[number];
-export type ReportingScope = (typeof reportingScope.enumValues)[number];
-export type CategoryKind = (typeof categoryKind.enumValues)[number];
+import { accountType, categoryKind, reportingScope } from "../db/schema.ts";
+import type { LegacyAccountId, LegacyCategoryId } from "../ids.ts";
+import {
+  type CategoryLayout,
+  type LayoutRoot,
+  type NormalizedName,
+  normalizeCategoryName,
+} from "./category-layout.ts";
+
+const AccountTypeSchema = z.enum(accountType.enumValues);
+const ReportingScopeSchema = z.enum(reportingScope.enumValues);
+const CategoryKindSchema = z.enum(categoryKind.enumValues);
+/** ISO 4217 code in capitals, as the new `accounts` table requires. */
+const CurrencySchema = z.string().regex(/^[A-Z]{3}$/);
+
+export type AccountType = z.infer<typeof AccountTypeSchema>;
+export type ReportingScope = z.infer<typeof ReportingScopeSchema>;
+export type CategoryKind = z.infer<typeof CategoryKindSchema>;
 export type CategoryType = "standard" | "labeled";
+
+/** The values of an old account that must fit the new `accounts` table. */
+const AccountValuesSchema = z.object({
+  type: AccountTypeSchema,
+  reportingScope: ReportingScopeSchema,
+  currency: CurrencySchema,
+});
 
 /** A row of the old `accounts` table; enum columns are read as text. */
 export type LegacyAccountRow = {
-  id: string;
+  id: LegacyAccountId;
   name: string;
   type: string;
   currency: string;
@@ -31,8 +56,8 @@ export type LegacyAccountRow = {
 
 /** A row of the old `categories` table; `kind` is read as text. */
 export type LegacyCategoryRow = {
-  id: string;
-  parentId: string | null;
+  id: LegacyCategoryId;
+  parentId: LegacyCategoryId | null;
   name: string;
   kind: string;
   isActive: boolean;
@@ -43,16 +68,16 @@ export type LegacyCategoryRow = {
 export type TranslationInput = {
   accounts: readonly LegacyAccountRow[];
   /** IDs of inactive old accounts that any row of the old database refers to. */
-  referencedInactiveAccountIds: ReadonlySet<string>;
+  referencedInactiveAccountIds: ReadonlySet<LegacyAccountId>;
   categories: readonly LegacyCategoryRow[];
   layout: CategoryLayout;
 };
 
 export type NewAccount = {
   /** Old ID of the leading (oldest) account, used as the working key. */
-  key: string;
+  key: LegacyAccountId;
   /** Every old ID merged into this account, the leading one first. */
-  legacyIds: string[];
+  legacyIds: LegacyAccountId[];
   name: string;
   type: AccountType;
   currency: string;
@@ -63,9 +88,9 @@ export type NewAccount = {
 
 export type NewCategory = {
   /** Old ID of the leading (oldest) row of the group, used as the working key. */
-  key: string;
+  key: LegacyCategoryId;
   /** Every old ID merged into this record, the leading one first. */
-  legacyIds: string[];
+  legacyIds: LegacyCategoryId[];
   name: string;
   kind: CategoryKind;
   type: CategoryType;
@@ -77,7 +102,7 @@ export type NewCategory = {
 
 export type NewSubcategory = NewCategory & {
   /** Key of the root category this one belongs to. */
-  parentKey: string;
+  parentKey: LegacyCategoryId;
 };
 
 export type MigrationPlan = {
@@ -121,20 +146,17 @@ export type TranslationResult =
   | { ok: true; plan: MigrationPlan; report: MigrationReport }
   | { ok: false; problems: string[] };
 
-const CURRENCY = /^[A-Z]{3}$/;
-
-function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
-  return (values as readonly string[]).includes(value);
-}
-
 /** Oldest first; the old ID breaks ties so the result never depends on input order. */
 function byCreation(a: { createdAt: Date; id: string }, b: { createdAt: Date; id: string }) {
   return a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
+/** An old category whose kind fits the new schema. */
+type ValidCategoryRow = Omit<LegacyCategoryRow, "kind"> & { kind: CategoryKind };
+
 /** Rows of one parent that share a normalized name and become one record. */
 type Group = {
-  rows: LegacyCategoryRow[];
+  rows: ValidCategoryRow[];
   kind: CategoryKind;
   createdAt: Date;
   updatedAt: Date;
@@ -144,24 +166,30 @@ function describeRow(row: { id: string; name: string }): string {
   return `"${row.name}" (old ID ${row.id})`;
 }
 
-type ValidAccount = LegacyAccountRow & { type: AccountType; reportingScope: ReportingScope };
+type AccountValues = z.infer<typeof AccountValuesSchema>;
+type ValidAccount = Omit<LegacyAccountRow, keyof AccountValues> & AccountValues;
 
-/** Checks one active old account; problems go to `problems`. */
-function checkAccount(row: LegacyAccountRow, problems: string[]): row is ValidAccount {
+/**
+ * Checks one active old account and returns it with its values parsed, or
+ * undefined; every problem goes to `problems`.
+ */
+function checkAccount(row: LegacyAccountRow, problems: string[]): ValidAccount | undefined {
+  const result = AccountValuesSchema.safeParse(row);
+  if (result.success) {
+    return { ...row, ...result.data };
+  }
+  const failed = new Set(result.error.issues.map((issue) => issue.path[0]));
   const account = `Account ${describeRow(row)}`;
-  const typeKnown = isOneOf(accountType.enumValues, row.type);
-  const scopeKnown = isOneOf(reportingScope.enumValues, row.reportingScope);
-  const currencyValid = CURRENCY.test(row.currency);
-  if (!typeKnown) {
+  if (failed.has("type")) {
     problems.push(`${account} has an unknown type "${row.type}".`);
   }
-  if (!scopeKnown) {
+  if (failed.has("reportingScope")) {
     problems.push(`${account} has an unknown reporting scope "${row.reportingScope}".`);
   }
-  if (!currencyValid) {
+  if (failed.has("currency")) {
     problems.push(`${account} has a currency "${row.currency}" that is not three capitals.`);
   }
-  return typeKnown && scopeKnown && currencyValid;
+  return undefined;
 }
 
 function translateAccounts(input: TranslationInput, problems: string[]) {
@@ -171,7 +199,7 @@ function translateAccounts(input: TranslationInput, problems: string[]) {
   let skipped = 0;
 
   const active: LegacyAccountRow[] = [];
-  const inactiveNames = new Set<string>();
+  const inactiveNames = new Set<NormalizedName>();
   for (const row of [...input.accounts].sort(byCreation)) {
     if (row.isActive) {
       active.push(row);
@@ -187,7 +215,7 @@ function translateAccounts(input: TranslationInput, problems: string[]) {
   }
 
   // Old account ID → index of the layout entry that takes it.
-  const entryOf = new Map<string, number>();
+  const entryOf = new Map<LegacyAccountId, number>();
   const layoutAccounts = input.layout.accounts ?? [];
   const groups: ValidAccount[][] = layoutAccounts.map(() => []);
   layoutAccounts.forEach((entry, index) => {
@@ -211,8 +239,9 @@ function translateAccounts(input: TranslationInput, problems: string[]) {
           continue;
         }
         entryOf.set(row.id, index);
-        if (checkAccount(row, problems)) {
-          groups[index].push(row);
+        const valid = checkAccount(row, problems);
+        if (valid !== undefined) {
+          groups[index].push(valid);
         }
       }
     }
@@ -221,8 +250,9 @@ function translateAccounts(input: TranslationInput, problems: string[]) {
   type Planned = { name: string; rows: ValidAccount[]; fromLayout: boolean };
   const planned: Planned[] = [];
   for (const row of active) {
-    if (!entryOf.has(row.id) && checkAccount(row, problems)) {
-      planned.push({ name: row.name, rows: [row], fromLayout: false });
+    const valid = entryOf.has(row.id) ? undefined : checkAccount(row, problems);
+    if (valid !== undefined) {
+      planned.push({ name: row.name, rows: [valid], fromLayout: false });
     }
   }
   layoutAccounts.forEach((entry, index) => {
@@ -251,7 +281,7 @@ function translateAccounts(input: TranslationInput, problems: string[]) {
   // with the name of an account that keeps its old name; accounts the layout
   // does not list migrate unchanged, so they are not compared with each other.
   // The parser already keeps the layout names apart.
-  const unlistedByName = new Map<string, Planned>();
+  const unlistedByName = new Map<NormalizedName, Planned>();
   for (const account of planned) {
     if (!account.fromLayout) {
       unlistedByName.set(normalizeCategoryName(account.name), account);
@@ -291,8 +321,8 @@ function translateAccounts(input: TranslationInput, problems: string[]) {
  */
 function checkCategoryRows(rows: readonly LegacyCategoryRow[], problems: string[]) {
   const byId = new Map(rows.map((row) => [row.id, row]));
-  const roots: LegacyCategoryRow[] = [];
-  const children: LegacyCategoryRow[] = [];
+  const roots: ValidCategoryRow[] = [];
+  const children: ValidCategoryRow[] = [];
 
   for (const row of [...rows].sort(byCreation)) {
     const category = `Category ${describeRow(row)}`;
@@ -301,7 +331,8 @@ function checkCategoryRows(rows: readonly LegacyCategoryRow[], problems: string[
       problems.push(`${category} is inactive; the migration expects only active categories.`);
       valid = false;
     }
-    if (!isOneOf(categoryKind.enumValues, row.kind)) {
+    const kind = CategoryKindSchema.safeParse(row.kind);
+    if (!kind.success) {
       problems.push(`${category} has an unknown kind "${row.kind}".`);
       valid = false;
     }
@@ -320,8 +351,8 @@ function checkCategoryRows(rows: readonly LegacyCategoryRow[], problems: string[
         valid = false;
       }
     }
-    if (valid) {
-      (row.parentId === null ? roots : children).push(row);
+    if (valid && kind.success) {
+      (row.parentId === null ? roots : children).push({ ...row, kind: kind.data });
     }
   }
 
@@ -330,18 +361,18 @@ function checkCategoryRows(rows: readonly LegacyCategoryRow[], problems: string[
 
 /** Groups rows (already sorted oldest first) by normalized name. */
 function groupByName(
-  rows: readonly LegacyCategoryRow[],
+  rows: readonly ValidCategoryRow[],
   parentName: string | null,
   problems: string[],
-): Map<string, Group> {
-  const groups = new Map<string, Group>();
+): Map<NormalizedName, Group> {
+  const groups = new Map<NormalizedName, Group>();
   for (const row of rows) {
     const name = normalizeCategoryName(row.name);
     const group = groups.get(name);
     if (group === undefined) {
       groups.set(name, {
         rows: [row],
-        kind: row.kind as CategoryKind,
+        kind: row.kind,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       });
@@ -382,15 +413,15 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
 
   // Keyed by the normalized old name each entry matches: `legacyName` when the
   // entry renames the category, otherwise its own name.
-  const layoutRoots = new Map<string, { index: number; root: LayoutRoot }>();
+  const layoutRoots = new Map<NormalizedName, { index: number; root: LayoutRoot }>();
   input.layout.roots.forEach((root, index) => {
     layoutRoots.set(normalizeCategoryName(root.legacyName ?? root.name), { index, root });
   });
 
   const rootGroups = groupByName(rows.roots, null, problems);
   // Old root ID → normalized name of its group, to attach the subcategories.
-  const rootGroupOf = new Map<string, string>();
-  const childrenByRoot = new Map<string, LegacyCategoryRow[]>();
+  const rootGroupOf = new Map<LegacyCategoryId, NormalizedName>();
+  const childrenByRoot = new Map<NormalizedName, ValidCategoryRow[]>();
   for (const [name, group] of rootGroups) {
     childrenByRoot.set(name, []);
     for (const row of group.rows) {
@@ -405,7 +436,12 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
     }
   }
 
-  type PlacedRoot = { name: string; group: Group; layoutIndex: number; layoutRoot: LayoutRoot };
+  type PlacedRoot = {
+    name: NormalizedName;
+    group: Group;
+    layoutIndex: number;
+    layoutRoot: LayoutRoot;
+  };
   const placedRoots: PlacedRoot[] = [];
   for (const [name, group] of rootGroups) {
     const match = layoutRoots.get(name);
@@ -449,7 +485,7 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
       }
     }
 
-    const layoutChildren = new Map<string, { index: number; name: string }>();
+    const layoutChildren = new Map<NormalizedName, { index: number; name: string }>();
     layoutRoot.children.forEach((childName, index) => {
       layoutChildren.set(normalizeCategoryName(childName), { index, name: childName });
     });

@@ -18,6 +18,7 @@ import {
   legacyAccountMap,
   legacyCategoryMap,
 } from "../db/schema.ts";
+import type { AccountId, CategoryId, LegacyAccountId, LegacyCategoryId } from "../ids.ts";
 import type { MigrationPlan, NewCategory } from "./accounts-categories.ts";
 
 /** Thrown when any of the four tables already has rows. */
@@ -45,7 +46,8 @@ export async function writeMigrationPlan(db: NodePgDatabase, plan: MigrationPlan
       throw new AlreadyMigratedError();
     }
 
-    const accountMap: { legacyId: string; accountId: string }[] = [];
+    // The IDs given back by `RETURNING` carry their brands from the schema.
+    const accountMap: { legacyId: LegacyAccountId; accountId: AccountId }[] = [];
     for (const account of plan.accounts) {
       const [row] = await tx
         .insert(accounts)
@@ -66,8 +68,11 @@ export async function writeMigrationPlan(db: NodePgDatabase, plan: MigrationPlan
       await tx.insert(legacyAccountMap).values(accountMap);
     }
 
-    const categoryMap: { legacyId: string; categoryId: string }[] = [];
-    const insertCategory = async (category: NewCategory, parentId: string | null) => {
+    const categoryMap: { legacyId: LegacyCategoryId; categoryId: CategoryId }[] = [];
+    const insertCategory = async (
+      category: NewCategory,
+      parentId: CategoryId | null,
+    ): Promise<CategoryId> => {
       const [row] = await tx
         .insert(categories)
         .values({
@@ -86,7 +91,8 @@ export async function writeMigrationPlan(db: NodePgDatabase, plan: MigrationPlan
       return row.id;
     };
 
-    const rootIds = new Map<string, string>();
+    // Old ID of the leading root row → new ID of the root category.
+    const rootIds = new Map<LegacyCategoryId, CategoryId>();
     for (const root of plan.rootCategories) {
       rootIds.set(root.key, await insertCategory(root, null));
     }

@@ -5,6 +5,11 @@
 // Imported by database tests only; relative `.ts` imports like the modules the
 // migration script loads.
 
+import {
+  LegacyAccountIdSchema,
+  type LegacyCategoryId,
+  LegacyCategoryIdSchema,
+} from "../ids.ts";
 import type { LegacyAccountRow, LegacyCategoryRow } from "./accounts-categories.ts";
 import { ACCOUNT_REFERENCE_TABLES } from "./read.ts";
 
@@ -52,9 +57,9 @@ function at(day: number): Date {
   return new Date(Date.UTC(2024, 0, day, 12));
 }
 
-export const ACCOUNT_BANK_1 = "a0000000-0000-4000-8000-000000000001";
-export const ACCOUNT_CASH_1 = "a0000000-0000-4000-8000-000000000002";
-export const ACCOUNT_INACTIVE = "a0000000-0000-4000-8000-000000000003";
+export const ACCOUNT_BANK_1 = LegacyAccountIdSchema.parse("a0000000-0000-4000-8000-000000000001");
+export const ACCOUNT_CASH_1 = LegacyAccountIdSchema.parse("a0000000-0000-4000-8000-000000000002");
+export const ACCOUNT_INACTIVE = LegacyAccountIdSchema.parse("a0000000-0000-4000-8000-000000000003");
 
 export const LEGACY_ACCOUNTS: LegacyAccountRow[] = [
   {
@@ -89,19 +94,19 @@ export const LEGACY_ACCOUNTS: LegacyAccountRow[] = [
   },
 ];
 
-export const ROOT_A = "c0000000-0000-4000-8000-000000000001";
-export const ROOT_B = "c0000000-0000-4000-8000-000000000002";
-export const ROOT_C = "c0000000-0000-4000-8000-000000000003";
-export const SUB_A1 = "c0000000-0000-4000-8000-000000000011";
-export const SUB_A2 = "c0000000-0000-4000-8000-000000000012";
-export const SUB_A3 = "c0000000-0000-4000-8000-000000000013";
-export const SUB_B_BONUS_OLD = "c0000000-0000-4000-8000-000000000021";
-export const SUB_B_BONUS_NEW = "c0000000-0000-4000-8000-000000000022";
-export const SUB_B_SALARY = "c0000000-0000-4000-8000-000000000023";
+export const ROOT_A = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000001");
+export const ROOT_B = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000002");
+export const ROOT_C = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000003");
+export const SUB_A1 = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000011");
+export const SUB_A2 = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000012");
+export const SUB_A3 = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000013");
+export const SUB_B_BONUS_OLD = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000021");
+export const SUB_B_BONUS_NEW = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000022");
+export const SUB_B_SALARY = LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000023");
 
 function category(
-  id: string,
-  parentId: string | null,
+  id: LegacyCategoryId,
+  parentId: LegacyCategoryId | null,
   name: string,
   kind: string,
   createdDay: number,

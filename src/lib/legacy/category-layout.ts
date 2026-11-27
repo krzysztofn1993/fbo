@@ -15,10 +15,22 @@
 // makes them one account named "name": one old name renames an account,
 // several merge accounts.
 //
+// Each field is checked by its own Zod schema, so one bad field does not hide
+// the problems of the others and every problem is reported at once.
+//
 // Loaded by the `legacy:migrate` script under plain `node`, so it imports only
-// `node:` modules and uses only erasable syntax.
+// packages and uses only erasable syntax.
 
 import { readFile } from "node:fs/promises";
+
+import { z } from "zod";
+
+/** A name after `normalizeCategoryName`; only such names are compared. */
+const NormalizedNameSchema = z
+  .string()
+  .transform((name) => name.trim().replace(/\s+/g, " ").toLocaleLowerCase("pl"))
+  .brand<"NormalizedName">();
+export type NormalizedName = z.infer<typeof NormalizedNameSchema>;
 
 export type LayoutRoot = {
   /** Spelling from the spreadsheet; the name the new category gets. */
@@ -47,25 +59,40 @@ export type CategoryLayoutResult =
   | { ok: true; layout: CategoryLayout }
   | { ok: false; problems: string[] };
 
-const TOP_KEYS = new Set(["roots", "accounts"]);
-const ROOT_KEYS = new Set(["name", "legacyName", "type", "children"]);
-const ACCOUNT_KEYS = new Set(["name", "legacyNames"]);
+/** A name in the file: a string with something other than whitespace. */
+const NameSchema = z.string().refine((value) => value.trim() !== "");
+
+/** Any JSON object, but not an array; its fields are checked one by one. */
+const EntrySchema = z.record(z.string(), z.unknown());
+
+const LAYOUT_FIELDS = {
+  roots: z.array(z.unknown()),
+  accounts: z.array(z.unknown()).optional(),
+};
+
+const ROOT_FIELDS = {
+  name: NameSchema,
+  legacyName: NameSchema.optional(),
+  type: z.literal("labeled").optional(),
+  children: z.array(z.unknown()).optional(),
+};
+
+const ACCOUNT_FIELDS = {
+  name: NameSchema,
+  legacyNames: z.array(z.unknown()).min(1),
+};
+
+function unknownFields(entry: Record<string, unknown>, fields: object): string[] {
+  return Object.keys(entry).filter((key) => !Object.hasOwn(fields, key));
+}
 
 /**
  * The one name normalization of the migration: trims, collapses inner
  * whitespace to a single space and lowercases with Polish rules. Used both to
  * merge old categories and to match them with the layout file.
  */
-export function normalizeCategoryName(name: string): string {
-  return name.trim().replace(/\s+/g, " ").toLocaleLowerCase("pl");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isName(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
+export function normalizeCategoryName(name: string): NormalizedName {
+  return NormalizedNameSchema.parse(name);
 }
 
 /** Parses and checks the layout file contents; reports every problem found. */
@@ -77,7 +104,9 @@ export function parseCategoryLayout(text: string): CategoryLayoutResult {
     return { ok: false, problems: ["The category layout file is not valid JSON."] };
   }
 
-  if (!isRecord(data) || !Array.isArray(data.roots)) {
+  const file = EntrySchema.safeParse(data);
+  const rootEntries = file.success ? LAYOUT_FIELDS.roots.safeParse(file.data.roots) : undefined;
+  if (!file.success || !rootEntries?.success) {
     return {
       ok: false,
       problems: ['The category layout file must be an object with a "roots" array.'],
@@ -85,51 +114,50 @@ export function parseCategoryLayout(text: string): CategoryLayoutResult {
   }
 
   const problems: string[] = [];
-  for (const key of Object.keys(data)) {
-    if (!TOP_KEYS.has(key)) {
-      problems.push(`The category layout file has an unknown field "${key}".`);
-    }
+  for (const key of unknownFields(file.data, LAYOUT_FIELDS)) {
+    problems.push(`The category layout file has an unknown field "${key}".`);
   }
   const roots: LayoutRoot[] = [];
-  const rootNames = new Map<string, number>();
+  const rootNames = new Map<NormalizedName, number>();
   // Normalized old name each entry matches → index of the first such entry.
-  const matchedNames = new Map<string, number>();
+  const matchedNames = new Map<NormalizedName, number>();
 
-  data.roots.forEach((entry: unknown, index) => {
+  rootEntries.data.forEach((value, index) => {
     const where = `roots[${index}]`;
-    if (!isRecord(entry)) {
+    const entry = EntrySchema.safeParse(value);
+    if (!entry.success) {
       problems.push(`${where} must be an object.`);
       return;
     }
-    for (const key of Object.keys(entry)) {
-      if (!ROOT_KEYS.has(key)) {
-        problems.push(`${where} has an unknown field "${key}".`);
-      }
+    for (const key of unknownFields(entry.data, ROOT_FIELDS)) {
+      problems.push(`${where} has an unknown field "${key}".`);
     }
 
-    const { name, legacyName, type, children } = entry;
-    if (!isName(name)) {
+    const name = ROOT_FIELDS.name.safeParse(entry.data.name);
+    if (!name.success) {
       problems.push(`${where}.name must be a non-empty string.`);
       return;
     }
-    const label = `${where} "${name}"`;
+    const label = `${where} "${name.data}"`;
 
-    if (legacyName !== undefined && !isName(legacyName)) {
+    const legacyName = ROOT_FIELDS.legacyName.safeParse(entry.data.legacyName);
+    if (!legacyName.success) {
       problems.push(`${label}: "legacyName" must be a non-empty string when present.`);
     }
-    const renamed = isName(legacyName);
+    const oldName = legacyName.success ? legacyName.data : undefined;
 
-    if (type !== undefined && type !== "labeled") {
+    const type = ROOT_FIELDS.type.safeParse(entry.data.type);
+    if (!type.success) {
       problems.push(`${label}: "type" must be "labeled" when present.`);
     }
-    const labeled = type === "labeled";
-    if (labeled && children !== undefined) {
+    const labeled = type.success && type.data === "labeled";
+    if (labeled && entry.data.children !== undefined) {
       problems.push(`${label} is labeled, so it cannot have "children".`);
     }
 
-    const normalized = normalizeCategoryName(name);
+    const normalized = normalizeCategoryName(name.data);
     const previous = rootNames.get(normalized);
-    const matchedName = normalizeCategoryName(renamed ? legacyName : name);
+    const matchedName = normalizeCategoryName(oldName ?? name.data);
     const earlier = matchedNames.get(matchedName);
     if (previous !== undefined) {
       problems.push(`${label} repeats the name of roots[${previous}].`);
@@ -141,37 +169,40 @@ export function parseCategoryLayout(text: string): CategoryLayoutResult {
     }
 
     const childNames: string[] = [];
-    if (children !== undefined && !Array.isArray(children)) {
+    const children = ROOT_FIELDS.children.safeParse(entry.data.children);
+    if (!children.success) {
       problems.push(`${label}: "children" must be an array of names.`);
-    } else if (children !== undefined) {
-      const seen = new Map<string, number>();
-      children.forEach((child: unknown, childIndex) => {
-        if (!isName(child)) {
+    } else {
+      const seen = new Map<NormalizedName, number>();
+      (children.data ?? []).forEach((value, childIndex) => {
+        const child = NameSchema.safeParse(value);
+        if (!child.success) {
           problems.push(`${label}: children[${childIndex}] must be a non-empty string.`);
           return;
         }
-        const childNormalized = normalizeCategoryName(child);
+        const childNormalized = normalizeCategoryName(child.data);
         const first = seen.get(childNormalized);
         if (first !== undefined) {
           problems.push(
-            `${label}: children[${childIndex}] "${child}" repeats the name of children[${first}].`,
+            `${label}: children[${childIndex}] "${child.data}" repeats the name of children[${first}].`,
           );
           return;
         }
         seen.set(childNormalized, childIndex);
-        childNames.push(child);
+        childNames.push(child.data);
       });
     }
 
     roots.push({
-      name,
-      ...(renamed ? { legacyName } : {}),
+      name: name.data,
+      ...(oldName === undefined ? {} : { legacyName: oldName }),
       labeled,
       children: labeled ? [] : childNames,
     });
   });
 
-  const accounts = data.accounts === undefined ? undefined : parseAccounts(data.accounts, problems);
+  const accounts =
+    file.data.accounts === undefined ? undefined : parseAccounts(file.data.accounts, problems);
 
   if (problems.length > 0) {
     return { ok: false, problems };
@@ -181,36 +212,36 @@ export function parseCategoryLayout(text: string): CategoryLayoutResult {
 
 /** Checks the "accounts" array; problems go to `problems`. */
 function parseAccounts(value: unknown, problems: string[]): LayoutAccount[] {
-  if (!Array.isArray(value)) {
+  const accountEntries = LAYOUT_FIELDS.accounts.safeParse(value);
+  if (!accountEntries.success) {
     problems.push('"accounts" must be an array.');
     return [];
   }
 
   const accounts: LayoutAccount[] = [];
   // Normalized new name / old name → index of the first entry that has it.
-  const newNames = new Map<string, number>();
-  const oldNames = new Map<string, number>();
+  const newNames = new Map<NormalizedName, number>();
+  const oldNames = new Map<NormalizedName, number>();
 
-  value.forEach((entry: unknown, index) => {
+  (accountEntries.data ?? []).forEach((value, index) => {
     const where = `accounts[${index}]`;
-    if (!isRecord(entry)) {
+    const entry = EntrySchema.safeParse(value);
+    if (!entry.success) {
       problems.push(`${where} must be an object.`);
       return;
     }
-    for (const key of Object.keys(entry)) {
-      if (!ACCOUNT_KEYS.has(key)) {
-        problems.push(`${where} has an unknown field "${key}".`);
-      }
+    for (const key of unknownFields(entry.data, ACCOUNT_FIELDS)) {
+      problems.push(`${where} has an unknown field "${key}".`);
     }
 
-    const { name, legacyNames } = entry;
-    if (!isName(name)) {
+    const name = ACCOUNT_FIELDS.name.safeParse(entry.data.name);
+    if (!name.success) {
       problems.push(`${where}.name must be a non-empty string.`);
       return;
     }
-    const label = `${where} "${name}"`;
+    const label = `${where} "${name.data}"`;
 
-    const normalized = normalizeCategoryName(name);
+    const normalized = normalizeCategoryName(name.data);
     const previous = newNames.get(normalized);
     if (previous !== undefined) {
       problems.push(`${label} repeats the name of accounts[${previous}].`);
@@ -218,30 +249,34 @@ function parseAccounts(value: unknown, problems: string[]): LayoutAccount[] {
       newNames.set(normalized, index);
     }
 
-    if (!Array.isArray(legacyNames) || legacyNames.length === 0) {
+    const legacyNames = ACCOUNT_FIELDS.legacyNames.safeParse(entry.data.legacyNames);
+    if (!legacyNames.success) {
       problems.push(`${label}: "legacyNames" must be a non-empty array of names.`);
       return;
     }
     const names: string[] = [];
-    legacyNames.forEach((legacyName: unknown, nameIndex) => {
-      if (!isName(legacyName)) {
+    legacyNames.data.forEach((value, nameIndex) => {
+      const legacyName = NameSchema.safeParse(value);
+      if (!legacyName.success) {
         problems.push(`${label}: legacyNames[${nameIndex}] must be a non-empty string.`);
         return;
       }
-      const key = normalizeCategoryName(legacyName);
+      const key = normalizeCategoryName(legacyName.data);
       const first = oldNames.get(key);
       if (first === index) {
-        problems.push(`${label} lists the old account "${legacyName}" twice.`);
+        problems.push(`${label} lists the old account "${legacyName.data}" twice.`);
         return;
       }
       if (first !== undefined) {
-        problems.push(`${label} lists the old account "${legacyName}" that accounts[${first}] lists.`);
+        problems.push(
+          `${label} lists the old account "${legacyName.data}" that accounts[${first}] lists.`,
+        );
         return;
       }
       oldNames.set(key, index);
-      names.push(legacyName);
+      names.push(legacyName.data);
     });
-    accounts.push({ name, legacyNames: names });
+    accounts.push({ name: name.data, legacyNames: names });
   });
 
   return accounts;

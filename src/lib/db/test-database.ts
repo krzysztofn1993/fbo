@@ -11,6 +11,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 
+import { type Env, nonBlankOr } from "../env.ts";
+
 export const DEFAULT_TEST_DATABASE_URL = "postgres://fbo:fbo@127.0.0.1:5433/fbo_test";
 export const DEFAULT_TEST_LEGACY_DATABASE_URL =
   "postgres://fbo:fbo@127.0.0.1:5433/fbo_test_legacy";
@@ -22,20 +24,14 @@ const DISPOSABLE_SUFFIXES = ["_test", "_test_legacy", "_e2e"];
 // uses for TypeScript in this package.
 const MIGRATIONS_FOLDER = resolve("drizzle");
 
-type Env = Readonly<Record<string, string | undefined>>;
-
 /** Database for the tests of the new version: `TEST_DATABASE_URL` or the local default. */
 export function testDatabaseUrl(env: Env = process.env): string {
-  return nonEmpty(env.TEST_DATABASE_URL) ?? DEFAULT_TEST_DATABASE_URL;
+  return nonBlankOr(env, "TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL);
 }
 
 /** Database shaped like the old version: `TEST_LEGACY_DATABASE_URL` or the local default. */
 export function testLegacyDatabaseUrl(env: Env = process.env): string {
-  return nonEmpty(env.TEST_LEGACY_DATABASE_URL) ?? DEFAULT_TEST_LEGACY_DATABASE_URL;
-}
-
-function nonEmpty(value: string | undefined): string | undefined {
-  return value === undefined || value.trim() === "" ? undefined : value;
+  return nonBlankOr(env, "TEST_LEGACY_DATABASE_URL", DEFAULT_TEST_LEGACY_DATABASE_URL);
 }
 
 /**

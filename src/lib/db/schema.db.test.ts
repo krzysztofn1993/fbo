@@ -10,6 +10,7 @@ import {
   legacyCategoryMap,
 } from "@/lib/db/schema";
 import { testDatabaseUrl, truncateTables } from "@/lib/db/test-database";
+import { LegacyAccountIdSchema, LegacyCategoryIdSchema } from "@/lib/ids";
 
 const pool = new pg.Pool({ connectionString: testDatabaseUrl(), max: 2 });
 const db = drizzle({ client: pool });
@@ -18,6 +19,11 @@ const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 const LEGACY_ID_1 = "6f1c2a7e-0d3b-4c8a-9e21-3b5d7f9a1c01";
 const LEGACY_ID_2 = "6f1c2a7e-0d3b-4c8a-9e21-3b5d7f9a1c02";
+// The same old IDs, with the brand each map requires.
+const LEGACY_ACCOUNT_ID_1 = LegacyAccountIdSchema.parse(LEGACY_ID_1);
+const LEGACY_ACCOUNT_ID_2 = LegacyAccountIdSchema.parse(LEGACY_ID_2);
+const LEGACY_CATEGORY_ID_1 = LegacyCategoryIdSchema.parse(LEGACY_ID_1);
+const LEGACY_CATEGORY_ID_2 = LegacyCategoryIdSchema.parse(LEGACY_ID_2);
 
 beforeEach(async () => {
   await truncateTables(pool);
@@ -198,11 +204,11 @@ describe("legacy maps", () => {
   it("rejects the same old account ID twice", async () => {
     const [first] = await db.insert(accounts).values(account()).returning();
     const [second] = await db.insert(accounts).values(account({ name: "bank 2" })).returning();
-    await db.insert(legacyAccountMap).values({ legacyId: LEGACY_ID_1, accountId: first.id });
+    await db.insert(legacyAccountMap).values({ legacyId: LEGACY_ACCOUNT_ID_1, accountId: first.id });
 
     expect(
       await violation(
-        db.insert(legacyAccountMap).values({ legacyId: LEGACY_ID_1, accountId: second.id }),
+        db.insert(legacyAccountMap).values({ legacyId: LEGACY_ACCOUNT_ID_1, accountId: second.id }),
       ),
     ).toEqual({ code: UNIQUE_VIOLATION, constraint: "legacy_account_map_pkey" });
   });
@@ -210,8 +216,8 @@ describe("legacy maps", () => {
   it("lets several old accounts point at one merged account", async () => {
     const [merged] = await db.insert(accounts).values(account()).returning();
     await db.insert(legacyAccountMap).values([
-      { legacyId: LEGACY_ID_1, accountId: merged.id },
-      { legacyId: LEGACY_ID_2, accountId: merged.id },
+      { legacyId: LEGACY_ACCOUNT_ID_1, accountId: merged.id },
+      { legacyId: LEGACY_ACCOUNT_ID_2, accountId: merged.id },
     ]);
 
     const rows = await db
@@ -224,11 +230,11 @@ describe("legacy maps", () => {
   it("rejects the same old category ID twice", async () => {
     const first = await insertRoot("Kategoria A", 0);
     const second = await insertRoot("Kategoria B", 1);
-    await db.insert(legacyCategoryMap).values({ legacyId: LEGACY_ID_1, categoryId: first.id });
+    await db.insert(legacyCategoryMap).values({ legacyId: LEGACY_CATEGORY_ID_1, categoryId: first.id });
 
     expect(
       await violation(
-        db.insert(legacyCategoryMap).values({ legacyId: LEGACY_ID_1, categoryId: second.id }),
+        db.insert(legacyCategoryMap).values({ legacyId: LEGACY_CATEGORY_ID_1, categoryId: second.id }),
       ),
     ).toEqual({ code: UNIQUE_VIOLATION, constraint: "legacy_category_map_pkey" });
   });
@@ -236,8 +242,8 @@ describe("legacy maps", () => {
   it("lets several old categories point at one merged category", async () => {
     const merged = await insertRoot("Kategoria A", 0);
     await db.insert(legacyCategoryMap).values([
-      { legacyId: LEGACY_ID_1, categoryId: merged.id },
-      { legacyId: LEGACY_ID_2, categoryId: merged.id },
+      { legacyId: LEGACY_CATEGORY_ID_1, categoryId: merged.id },
+      { legacyId: LEGACY_CATEGORY_ID_2, categoryId: merged.id },
     ]);
 
     const rows = await db
@@ -251,8 +257,8 @@ describe("legacy maps", () => {
   it("does not delete an account or a category that a map row points at", async () => {
     const [mapped] = await db.insert(accounts).values(account()).returning();
     const category = await insertRoot("Kategoria A", 0);
-    await db.insert(legacyAccountMap).values({ legacyId: LEGACY_ID_1, accountId: mapped.id });
-    await db.insert(legacyCategoryMap).values({ legacyId: LEGACY_ID_1, categoryId: category.id });
+    await db.insert(legacyAccountMap).values({ legacyId: LEGACY_ACCOUNT_ID_1, accountId: mapped.id });
+    await db.insert(legacyCategoryMap).values({ legacyId: LEGACY_CATEGORY_ID_1, categoryId: category.id });
 
     expect(await violation(db.delete(accounts).where(eq(accounts.id, mapped.id)))).toEqual({
       code: RESTRICT_VIOLATION,

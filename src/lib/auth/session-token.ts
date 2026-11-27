@@ -6,6 +6,7 @@
 // so changing either signs every session out.
 
 import { sealData, unsealData } from "iron-session";
+import { z } from "zod";
 
 import type { AuthConfig } from "@/lib/auth/config";
 
@@ -18,15 +19,21 @@ export const REFRESH_INTERVAL_MS = 60_000;
 
 const PAYLOAD_VERSION = 1;
 
-export type SessionPayload = {
-  v: typeof PAYLOAD_VERSION;
-  username: string;
-  fingerprint: string;
-  /** Login time, in milliseconds since the epoch. */
-  issuedAt: number;
-  /** Last activity, in milliseconds since the epoch. */
-  lastActiveAt: number;
-};
+/** Milliseconds since the epoch. */
+const TimestampSchema = z.int().nonnegative();
+
+/** The sealed cookie contents; unknown fields are dropped when it is read. */
+const SessionPayloadSchema = z.object({
+  v: z.literal(PAYLOAD_VERSION),
+  username: z.string(),
+  fingerprint: z.string(),
+  /** Login time. */
+  issuedAt: TimestampSchema,
+  /** Last activity. */
+  lastActiveAt: TimestampSchema,
+});
+
+export type SessionPayload = z.infer<typeof SessionPayloadSchema>;
 
 type SessionIdentity = Pick<AuthConfig, "username" | "passwordHashFingerprint">;
 type SessionConfig = SessionIdentity & Pick<AuthConfig, "sessionSecret">;
@@ -46,24 +53,6 @@ export function newSession(config: SessionIdentity, now: number): SessionPayload
 
 export function sealSession(payload: SessionPayload, secret: string): Promise<string> {
   return sealData(payload, { password: secret, ttl: SEAL_TTL_SECONDS });
-}
-
-function isTimestamp(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function isSessionPayload(value: unknown): value is SessionPayload {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return (
-    candidate.v === PAYLOAD_VERSION &&
-    typeof candidate.username === "string" &&
-    typeof candidate.fingerprint === "string" &&
-    isTimestamp(candidate.issuedAt) &&
-    isTimestamp(candidate.lastActiveAt)
-  );
 }
 
 /**
@@ -87,26 +76,29 @@ export async function openSession(
     return null;
   }
 
-  if (!isSessionPayload(data)) {
+  const parsed = SessionPayloadSchema.safeParse(data);
+  if (!parsed.success) {
     return null;
   }
-  if (data.username !== config.username || data.fingerprint !== config.passwordHashFingerprint) {
+  const session = parsed.data;
+  if (
+    session.username !== config.username ||
+    session.fingerprint !== config.passwordHashFingerprint
+  ) {
     return null;
   }
-  if (data.issuedAt > now || data.lastActiveAt > now || data.lastActiveAt < data.issuedAt) {
+  if (
+    session.issuedAt > now ||
+    session.lastActiveAt > now ||
+    session.lastActiveAt < session.issuedAt
+  ) {
     return null;
   }
-  if (now - data.lastActiveAt >= IDLE_TIMEOUT_MS || now - data.issuedAt >= ABSOLUTE_TIMEOUT_MS) {
+  if (now - session.lastActiveAt >= IDLE_TIMEOUT_MS || now - session.issuedAt >= ABSOLUTE_TIMEOUT_MS) {
     return null;
   }
 
-  return {
-    v: PAYLOAD_VERSION,
-    username: data.username,
-    fingerprint: data.fingerprint,
-    issuedAt: data.issuedAt,
-    lastActiveAt: data.lastActiveAt,
-  };
+  return session;
 }
 
 export function needsRefresh(payload: SessionPayload, now: number): boolean {

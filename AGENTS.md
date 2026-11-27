@@ -53,6 +53,8 @@ Run `npm run verify` before every commit; it must exit 0. GitHub Actions runs th
 - Enum values in the code and the database are English identifiers; names shown to the user live only in the translation file, `src/i18n/pl.ts`.
 - Pages get the database from `getDb()` in `src/lib/db/client.ts` only after `verifySession()`, inside `<Suspense>`, so `next build` never connects; queries take the handle as a parameter.
 - New IDs are UUIDv7 given by the database (`uuidv7()` as the column default); do not generate IDs in the application.
+- Validate every external input (environment variables, files, rows from another system's database, request and form data, API responses) with a Zod schema where it enters, and work with the parsed type inside; name the failing variable or field in problems, never the value of a secret.
+- Model identifiers as branded types from `src/lib/ids.ts`, one brand per entity and separate brands for legacy IDs, so they cannot be mixed up. An ID gets its brand where it enters: from the schema that parses it, or from `$type<…>()` on its column in `src/lib/db/schema.ts` when the database returns it.
 - Represent money as `bigint` in the smallest currency unit, never as `number`; this is why `target` in `@tsconfig.json` is ES2020.
 
 ## Testing

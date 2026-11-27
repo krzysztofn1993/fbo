@@ -2,9 +2,11 @@
 // map rows of the old version to the records created from them.
 //
 // Loaded by the Next server, by plain `node` scripts and by drizzle-kit, so it
-// imports only from packages. Enum values are English identifiers; the names
-// shown to the user come from the translation file. New IDs are UUIDv7, given
-// by PostgreSQL 18 (`uuidv7()`).
+// imports only from packages, plus types through relative `.ts` paths. Enum
+// values are English identifiers; the names shown to the user come from the
+// translation file. New IDs are UUIDv7, given by PostgreSQL 18 (`uuidv7()`).
+// Every ID column carries its brand from `ids.ts`, so the IDs that queries and
+// `RETURNING` give back are branded where they leave the database.
 //
 // After a change here run `npm run db:generate` and commit the new migration.
 
@@ -21,6 +23,8 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+
+import type { AccountId, CategoryId, LegacyAccountId, LegacyCategoryId } from "../ids.ts";
 
 export const accountType = pgEnum("account_type", [
   "bank",
@@ -48,7 +52,7 @@ function updatedAt() {
 export const accounts = pgTable(
   "accounts",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id").$type<AccountId>().primaryKey().default(sql`uuidv7()`),
     name: text("name").notNull(),
     type: accountType("type").notNull(),
     /** ISO 4217 code in capitals, for example "EUR". */
@@ -67,11 +71,11 @@ export const accounts = pgTable(
 export const categories = pgTable(
   "categories",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id").$type<CategoryId>().primaryKey().default(sql`uuidv7()`),
     /** Null for a root category; there are two levels at most. */
-    parentId: uuid("parent_id").references((): AnyPgColumn => categories.id, {
-      onDelete: "restrict",
-    }),
+    parentId: uuid("parent_id")
+      .$type<CategoryId>()
+      .references((): AnyPgColumn => categories.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
     kind: categoryKind("kind").notNull(),
     type: categoryType("type").notNull().default("standard"),
@@ -93,8 +97,9 @@ export const categories = pgTable(
  * one account: the layout file merged them.
  */
 export const legacyAccountMap = pgTable("legacy_account_map", {
-  legacyId: uuid("legacy_id").primaryKey(),
+  legacyId: uuid("legacy_id").$type<LegacyAccountId>().primaryKey(),
   accountId: uuid("account_id")
+    .$type<AccountId>()
     .notNull()
     .references(() => accounts.id, { onDelete: "restrict" }),
   migratedAt: timestamp("migrated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -105,8 +110,9 @@ export const legacyAccountMap = pgTable("legacy_account_map", {
  * one category: old names that differ only in case were merged.
  */
 export const legacyCategoryMap = pgTable("legacy_category_map", {
-  legacyId: uuid("legacy_id").primaryKey(),
+  legacyId: uuid("legacy_id").$type<LegacyCategoryId>().primaryKey(),
   categoryId: uuid("category_id")
+    .$type<CategoryId>()
     .notNull()
     .references(() => categories.id, { onDelete: "restrict" }),
   migratedAt: timestamp("migrated_at", { withTimezone: true }).notNull().defaultNow(),

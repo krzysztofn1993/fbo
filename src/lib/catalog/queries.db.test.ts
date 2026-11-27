@@ -5,6 +5,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { listAccounts, listCategoryTree } from "@/lib/catalog/queries";
 import { accounts, categories } from "@/lib/db/schema";
 import { testDatabaseUrl, truncateTables } from "@/lib/db/test-database";
+import type { CategoryId } from "@/lib/ids";
 
 const pool = new pg.Pool({ connectionString: testDatabaseUrl(), max: 2 });
 const db = drizzle({ client: pool });
@@ -19,7 +20,7 @@ afterAll(async () => {
 
 type NewCategory = typeof categories.$inferInsert;
 
-async function insertCategory(values: NewCategory): Promise<string> {
+async function insertCategory(values: NewCategory): Promise<CategoryId> {
   const [row] = await db.insert(categories).values(values).returning({ id: categories.id });
   return row.id;
 }

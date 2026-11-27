@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { LegacyAccountIdSchema, LegacyCategoryIdSchema } from "@/lib/ids";
 import {
   type LegacyAccountRow,
   type LegacyCategoryRow,
@@ -21,7 +22,7 @@ function id(): string {
 
 function account(overrides: Partial<LegacyAccountRow> = {}): LegacyAccountRow {
   return {
-    id: id(),
+    id: LegacyAccountIdSchema.parse(id()),
     name: "bank 1",
     type: "bank",
     currency: "PLN",
@@ -39,7 +40,7 @@ function category(
   overrides: Partial<LegacyCategoryRow> = {},
 ): LegacyCategoryRow {
   return {
-    id: id(),
+    id: LegacyCategoryIdSchema.parse(id()),
     parentId: parent?.id ?? null,
     name,
     kind: parent?.kind ?? "expense",
@@ -298,7 +299,7 @@ describe("categories", () => {
 
   it("rejects a category whose parent does not exist", () => {
     const orphan = category("Podkategoria 1", null, {
-      parentId: "00000000-0000-4000-8000-999999999999",
+      parentId: LegacyCategoryIdSchema.parse("00000000-0000-4000-8000-999999999999"),
     });
     expect(problemsOf(input({ categories: [orphan] }))).toEqual([
       expect.stringContaining("does not exist"),

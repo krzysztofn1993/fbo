@@ -11,6 +11,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 
 import { readAuthConfig, sessionCookieOptions } from "@/lib/auth/config";
 import type { AuthConfig, SessionCookieOptions } from "@/lib/auth/config";
@@ -33,10 +34,20 @@ function logConfigProblems(problems: string[]): void {
   );
 }
 
-// A file upload in place of a text field counts as an empty value.
-function textField(formData: FormData, name: string): string {
-  const value = formData.get(name);
-  return typeof value === "string" ? value : "";
+// A missing field, or a file upload in place of a text field, counts as an
+// empty value.
+const TextFieldSchema = z.string().catch("");
+
+const LoginFormSchema = z.object({
+  username: TextFieldSchema,
+  password: TextFieldSchema,
+});
+
+function readLoginForm(formData: FormData): z.infer<typeof LoginFormSchema> {
+  return LoginFormSchema.parse({
+    username: formData.get("username"),
+    password: formData.get("password"),
+  });
 }
 
 // Compares fixed-length digests, so the time taken does not depend on where
@@ -75,10 +86,12 @@ function expiredCookie(options: SessionCookieOptions) {
 }
 
 export async function login(_prev: LoginState, formData: FormData): Promise<LoginState> {
+  const { username, password } = readLoginForm(formData);
+
   const result = readAuthConfig();
   if (!result.ok) {
     logConfigProblems(result.problems);
-    return { error: CONFIG_ERROR_MESSAGE, username: textField(formData, "username") };
+    return { error: CONFIG_ERROR_MESSAGE, username };
   }
   const { config } = result;
 
@@ -86,14 +99,8 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
   // requests cannot get past a failure that is not recorded yet.
   const attempt = getLoginThrottle().begin(Date.now());
   if (!attempt.allowed) {
-    return {
-      error: throttledMessage(attempt.retryAfterSeconds),
-      username: textField(formData, "username"),
-    };
+    return { error: throttledMessage(attempt.retryAfterSeconds), username };
   }
-
-  const username = textField(formData, "username");
-  const password = textField(formData, "password");
 
   let succeeded = false;
   try {

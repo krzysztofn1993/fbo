@@ -13,6 +13,7 @@
 // with the `.ts` extension only.
 
 import { readDatabaseUrl } from "../src/lib/db/config.ts";
+import { NonBlankSchema } from "../src/lib/env.ts";
 import type { MigrationReport } from "../src/lib/legacy/accounts-categories.ts";
 import { runLegacyMigration } from "../src/lib/legacy/migrate.ts";
 
@@ -71,18 +72,18 @@ async function main(): Promise<void> {
   if (!legacyDatabase.ok) {
     problems.push(legacyDatabase.problem);
   }
-  const layoutFile = process.env.LEGACY_CATEGORY_LAYOUT_FILE;
-  if (layoutFile === undefined || layoutFile.trim() === "") {
+  const layoutFile = NonBlankSchema.safeParse(process.env.LEGACY_CATEGORY_LAYOUT_FILE);
+  if (!layoutFile.success) {
     problems.push("LEGACY_CATEGORY_LAYOUT_FILE is not set.");
   }
-  if (!newDatabase.ok || !legacyDatabase.ok || layoutFile === undefined || problems.length > 0) {
+  if (!newDatabase.ok || !legacyDatabase.ok || !layoutFile.success) {
     fail(`Cannot migrate accounts and categories:\n${problems.join("\n")}`);
   }
 
   const outcome = await runLegacyMigration({
     newDatabaseUrl: newDatabase.url,
     legacyDatabaseUrl: legacyDatabase.url,
-    layoutFile,
+    layoutFile: layoutFile.data,
   });
   switch (outcome.status) {
     case "migrated":

@@ -125,6 +125,22 @@ describe("openSession", () => {
       await expect(openSession(value, CONFIG, LOGIN_AT)).resolves.toBeNull();
     }
   });
+
+  it("rejects times that are negative, fractional or beyond a safe integer", async () => {
+    for (const issuedAt of [-1, LOGIN_AT + 0.5, Number.MAX_SAFE_INTEGER + 2]) {
+      const payload = { ...newSession(CONFIG, LOGIN_AT), issuedAt };
+      const value = await sealData(payload, { password: CONFIG.sessionSecret });
+      await expect(openSession(value, CONFIG, LOGIN_AT), String(issuedAt)).resolves.toBeNull();
+    }
+  });
+
+  it("drops fields the payload does not define", async () => {
+    const payload = { ...newSession(CONFIG, LOGIN_AT), admin: true };
+    const value = await sealData(payload, { password: CONFIG.sessionSecret });
+    await expect(openSession(value, CONFIG, LOGIN_AT)).resolves.toEqual(
+      newSession(CONFIG, LOGIN_AT),
+    );
+  });
 });
 
 describe("needsRefresh", () => {

@@ -6,12 +6,17 @@
 // `.env` files and Docker Compose, both of which expand `$NAME` in values.
 //
 // This module is also run by plain `node` (type stripping) from the hash
-// command, so it imports only `node:` modules and uses only erasable syntax.
+// command, so it imports only packages and uses only erasable syntax.
 
 import { argon2, randomBytes, timingSafeEqual } from "node:crypto";
 
+import { z } from "zod";
+
 export const PASSWORD_MIN_LENGTH = 15;
 export const PASSWORD_MAX_LENGTH = 256;
+
+/** A password the hash command accepts for a new hash. */
+export const NewPasswordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH);
 
 const ALGORITHM = "argon2id";
 const VERSION = 19;

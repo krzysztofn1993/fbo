@@ -6,8 +6,11 @@
 
 import { createHash } from "node:crypto";
 
+import { z } from "zod";
+
 import { parsePasswordHash } from "@/lib/auth/password-hash";
 import { IDLE_TIMEOUT_MS } from "@/lib/auth/session-token";
+import { type Env, NonBlankSchema } from "@/lib/env";
 
 /** iron-session refuses shorter secrets. */
 export const SESSION_SECRET_MIN_LENGTH = 32;
@@ -37,56 +40,38 @@ export type SessionCookieOptions = {
   maxAge: number;
 };
 
-type Env = Readonly<Record<string, string | undefined>>;
+// Each variable is checked on its own, so every problem is reported at once.
+const AuthEnvSchema = z.object({
+  ADMIN_USERNAME: NonBlankSchema,
+  ADMIN_PASSWORD_HASH: z.string().refine((value) => parsePasswordHash(value) !== null),
+  SESSION_SECRET: z.string().min(SESSION_SECRET_MIN_LENGTH),
+  // Secure by default; only an explicit "false" turns it off.
+  SESSION_COOKIE_SECURE: z.enum(["true", "false"]).optional(),
+});
+
+const AUTH_VARIABLES = Object.keys(AuthEnvSchema.shape);
 
 function fingerprint(passwordHash: string): string {
   return createHash("sha256").update(passwordHash).digest().subarray(0, 16).toString("base64url");
 }
 
 export function readAuthConfig(env: Env = process.env): AuthConfigResult {
-  const problems: string[] = [];
-
-  const username = env.ADMIN_USERNAME;
-  if (username === undefined || username.trim() === "") {
-    problems.push("ADMIN_USERNAME");
+  const result = AuthEnvSchema.safeParse(env);
+  if (!result.success) {
+    // Only the names of the variables, in a fixed order; never their values.
+    const failed = new Set(result.error.issues.map((issue) => issue.path[0]));
+    return { ok: false, problems: AUTH_VARIABLES.filter((name) => failed.has(name)) };
   }
 
-  const passwordHash = env.ADMIN_PASSWORD_HASH;
-  if (passwordHash === undefined || parsePasswordHash(passwordHash) === null) {
-    problems.push("ADMIN_PASSWORD_HASH");
-  }
-
-  const sessionSecret = env.SESSION_SECRET;
-  if (sessionSecret === undefined || sessionSecret.length < SESSION_SECRET_MIN_LENGTH) {
-    problems.push("SESSION_SECRET");
-  }
-
-  // Secure by default; only an explicit "false" turns it off.
-  const secureValue = env.SESSION_COOKIE_SECURE;
-  let cookieSecure = true;
-  if (secureValue === "false") {
-    cookieSecure = false;
-  } else if (secureValue !== undefined && secureValue !== "true") {
-    problems.push("SESSION_COOKIE_SECURE");
-  }
-
-  if (
-    problems.length > 0 ||
-    username === undefined ||
-    passwordHash === undefined ||
-    sessionSecret === undefined
-  ) {
-    return { ok: false, problems };
-  }
-
+  const vars = result.data;
   return {
     ok: true,
     config: {
-      username,
-      passwordHash,
-      passwordHashFingerprint: fingerprint(passwordHash),
-      sessionSecret,
-      cookieSecure,
+      username: vars.ADMIN_USERNAME,
+      passwordHash: vars.ADMIN_PASSWORD_HASH,
+      passwordHashFingerprint: fingerprint(vars.ADMIN_PASSWORD_HASH),
+      sessionSecret: vars.SESSION_SECRET,
+      cookieSecure: vars.SESSION_COOKIE_SECURE !== "false",
     },
   };
 }

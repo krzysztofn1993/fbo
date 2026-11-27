@@ -13,7 +13,8 @@
     "verify": "npm run lint && npm run build && npm test && npm run test:e2e",
     "auth:hash-password": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/hash-password.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --env-file-if-exists=.env.local --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/db-migrate.ts"
+    "db:migrate": "node --env-file-if-exists=.env.local --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/db-migrate.ts",
+    "legacy:migrate": "node --env-file-if-exists=.env.local --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/legacy-migrate.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.4",

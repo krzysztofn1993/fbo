@@ -5,7 +5,8 @@ your own machine.
 
 The project is at an early stage: this repository holds the application
 scaffold, sign-in for the single administrator, a first domain rule, the
-database schema for accounts and categories, their tests, and a CI check.
+database schema for accounts and categories, a one-time command that moves
+them from the old version, their tests, and a CI check.
 
 ## Requirements
 
@@ -28,15 +29,19 @@ the sign-in screen requires the configuration described below.
 ## Configuration
 
 The instance has one administrator account. Its credentials and the session
-secret come from environment variables:
+secret come from environment variables, as does everything else the app and
+its commands need; variables marked "migration" are read only by
+`npm run legacy:migrate`:
 
-| Variable                | Required | Meaning                                                                     |
-| ----------------------- | -------- | --------------------------------------------------------------------------- |
-| `ADMIN_USERNAME`        | yes      | Username of the administrator                                               |
-| `ADMIN_PASSWORD_HASH`   | yes      | Hash of the administrator password, printed by `npm run auth:hash-password` |
-| `SESSION_SECRET`        | yes      | Key that encrypts the session cookie, at least 32 characters                |
-| `SESSION_COOKIE_SECURE` | no       | `true` (default) or `false`; see [HTTPS](#https) below                      |
-| `DATABASE_URL`          | yes      | PostgreSQL connection URL; see [Database](#database) below                  |
+| Variable                      | Required  | Meaning                                                                                |
+| ----------------------------- | --------- | -------------------------------------------------------------------------------------- |
+| `ADMIN_USERNAME`              | yes       | Username of the administrator                                                          |
+| `ADMIN_PASSWORD_HASH`         | yes       | Hash of the administrator password, printed by `npm run auth:hash-password`            |
+| `SESSION_SECRET`              | yes       | Key that encrypts the session cookie, at least 32 characters                           |
+| `SESSION_COOKIE_SECURE`       | no        | `true` (default) or `false`; see [HTTPS](#https) below                                 |
+| `DATABASE_URL`                | yes       | PostgreSQL connection URL; see [Database](#database) below                             |
+| `LEGACY_DATABASE_URL`         | migration | URL of the restored old database; see [Moving data](#moving-data-from-the-old-version) |
+| `LEGACY_CATEGORY_LAYOUT_FILE` | migration | Path to the category layout file, kept outside the repository                          |
 
 Generate the password hash and the secret:
 
@@ -117,6 +122,54 @@ server, which they create when missing and empty on every run; set
 setup refuses any database whose name does not end in `_test`, `_test_legacy`
 or `_e2e`, so it cannot empty the development database by mistake.
 
+## Moving data from the old version
+
+`npm run legacy:migrate` moves the accounts and categories of the old version
+into the new database, once. It copies the active accounts with their type,
+currency and reporting scope and skips the inactive ones. It copies every
+category with its kind, merges subcategories of one parent whose names differ
+only in case or spacing (the old IDs of all merged rows map to the one new
+category), and takes the order of the categories and the categories that take
+labels instead of subcategories from a layout file.
+
+1. Restore the dump of the old database into a database of its own, for
+   example `fbo_legacy` on the local server. The command only reads it.
+2. Write the category layout file and keep it outside the repository. It lists
+   the root categories in display order, and under each its subcategories in
+   display order; `"type": "labeled"` marks a root category that takes labels,
+   and such a category cannot have `children`. Names are matched with the old
+   categories regardless of case and spacing, and the spelling in the file
+   becomes the name of the new category. A made-up example:
+
+   ```json
+   {
+     "roots": [
+       { "name": "Category A", "children": ["Subcategory 2", "Subcategory 1"] },
+       { "name": "Category B", "type": "labeled" },
+       { "name": "Income", "children": ["Salary", "Bonus"] }
+     ]
+   }
+   ```
+
+3. Set `DATABASE_URL` to a new database with the schema applied
+   (`npm run db:migrate`) and no accounts or categories yet,
+   `LEGACY_DATABASE_URL` to the restored old database and
+   `LEGACY_CATEGORY_LAYOUT_FILE` to the layout file, for example in
+   `.env.local`.
+4. Run `npm run legacy:migrate` once and read the summary it prints.
+
+Every root category of the old database needs an entry in the layout file.
+Subcategories without an entry go after the listed ones of their root
+category, oldest first, and the summary names them; entries without a
+matching category only produce a warning. The command refuses to run when
+both URLs point at the same database, and it checks every rule before it
+writes: when the old data break one (an inactive account that other rows
+still refer to, a third category level, an unknown value), it lists every
+problem and writes nothing. The write is one transaction into empty tables,
+so a second run refuses and changes nothing. To try again, start from a fresh
+new database: recreate it, run `npm run db:migrate`, then
+`npm run legacy:migrate`.
+
 ## Scripts
 
 | Command                      | What it does                                               |
@@ -131,6 +184,7 @@ or `_e2e`, so it cannot empty the development database by mistake.
 | `npm run verify`             | Run lint, build, unit, database and browser tests in order |
 | `npm run db:migrate`         | Apply pending migrations to `DATABASE_URL`                 |
 | `npm run db:generate`        | Write a migration for changes in the schema                |
+| `npm run legacy:migrate`     | Move accounts and categories from the old version, once    |
 | `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line                       |
 
 `npm run test:e2e` starts the production build on port 3100 with a test-only

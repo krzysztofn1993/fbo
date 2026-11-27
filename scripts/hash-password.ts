@@ -13,6 +13,7 @@ import { Writable } from "node:stream";
 
 import {
   hashPassword,
+  NewPasswordSchema,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
 } from "../src/lib/auth/password-hash.ts";
@@ -102,7 +103,7 @@ async function main(): Promise<void> {
     password = line;
   }
 
-  if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+  if (!NewPasswordSchema.safeParse(password).success) {
     fail(`Hasło musi mieć od ${PASSWORD_MIN_LENGTH} do ${PASSWORD_MAX_LENGTH} znaków.`);
   }
 

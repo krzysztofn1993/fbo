@@ -4,27 +4,28 @@
 // database. Problems name the variable only, never its value, because the URL
 // usually carries a password. Used by plain `node` scripts, so no `@/` imports.
 
-export type DatabaseUrlResult = { ok: true; url: string } | { ok: false; problem: string };
+import { z } from "zod";
 
-type Env = Readonly<Record<string, string | undefined>>;
+import type { Env } from "../env.ts";
+
+export type DatabaseUrlResult = { ok: true; url: string } | { ok: false; problem: string };
 
 const PROTOCOLS = new Set(["postgres:", "postgresql:"]);
 
+// Each message follows the variable name; the first failed rule stops the
+// rest, so exactly one problem is reported.
+const DatabaseUrlSchema = z
+  .string({ error: "is not set." })
+  .refine((value) => value.trim() !== "", { error: "is not set.", abort: true })
+  .refine((value) => URL.canParse(value), { error: "is not a valid URL.", abort: true })
+  .refine((value) => PROTOCOLS.has(new URL(value).protocol), {
+    error: "must start with postgres:// or postgresql://.",
+  });
+
 export function readDatabaseUrl(name: string, env: Env = process.env): DatabaseUrlResult {
-  const value = env[name];
-  if (value === undefined || value.trim() === "") {
-    return { ok: false, problem: `${name} is not set.` };
+  const result = DatabaseUrlSchema.safeParse(env[name]);
+  if (!result.success) {
+    return { ok: false, problem: `${name} ${result.error.issues[0].message}` };
   }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return { ok: false, problem: `${name} is not a valid URL.` };
-  }
-  if (!PROTOCOLS.has(parsed.protocol)) {
-    return { ok: false, problem: `${name} must start with postgres:// or postgresql://.` };
-  }
-
-  return { ok: true, url: value };
+  return { ok: true, url: result.data };
 }

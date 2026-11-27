@@ -9,14 +9,14 @@ import pg from "pg";
 
 import { accounts, categories } from "../src/lib/db/schema.ts";
 import { prepareTestDatabase } from "../src/lib/db/test-database.ts";
+import { type Env, nonBlankOr } from "../src/lib/env.ts";
 import { fixtureAccounts, fixtureCategories } from "./fixtures/catalog.ts";
 
 export const DEFAULT_E2E_DATABASE_URL = "postgres://fbo:fbo@127.0.0.1:5433/fbo_e2e";
 
 /** Database of the browser tests: `E2E_DATABASE_URL` or the local default. */
-export function e2eDatabaseUrl(env: Readonly<Record<string, string | undefined>> = process.env) {
-  const value = env.E2E_DATABASE_URL;
-  return value === undefined || value.trim() === "" ? DEFAULT_E2E_DATABASE_URL : value;
+export function e2eDatabaseUrl(env: Env = process.env): string {
+  return nonBlankOr(env, "E2E_DATABASE_URL", DEFAULT_E2E_DATABASE_URL);
 }
 
 export default async function globalSetup(): Promise<void> {

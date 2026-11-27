@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 
 import { passwordHash, username } from "./e2e/fixtures/test-account";
+import { e2eDatabaseUrl } from "./e2e/global-setup";
 
 const PORT = 3100;
 const BASE_URL = `http://localhost:${PORT}`;
@@ -12,6 +13,8 @@ const sessionSecret = randomBytes(32).toString("base64url");
 
 export default defineConfig({
   testDir: "e2e",
+  // Recreates the `_e2e` database with made-up data before the tests start.
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -37,6 +40,7 @@ export default defineConfig({
       ADMIN_PASSWORD_HASH: passwordHash,
       SESSION_SECRET: sessionSecret,
       SESSION_COOKIE_SECURE: "true",
+      DATABASE_URL: e2eDatabaseUrl(),
     },
   },
 });

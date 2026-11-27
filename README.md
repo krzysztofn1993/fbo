@@ -4,18 +4,23 @@ FBO is a self-hosted household finance app. It runs as a single instance on
 your own machine.
 
 The project is at an early stage: this repository holds the application
-scaffold, sign-in for the single administrator, a first domain rule with its
-tests, and a CI check.
+scaffold, sign-in for the single administrator, a first domain rule, the
+database schema for accounts and categories, a one-time command that moves
+them from the old version, pages that list the accounts and the category
+tree, their tests, and a CI check.
 
 ## Requirements
 
 - Node.js 26 (the version is pinned in `.nvmrc`)
 - npm
+- Docker with Compose, for the local PostgreSQL (see [Database](#database))
 
 ## Getting started
 
 ```bash
 npm install
+docker compose up -d
+npm run db:migrate
 npm run dev
 ```
 
@@ -25,14 +30,19 @@ the sign-in screen requires the configuration described below.
 ## Configuration
 
 The instance has one administrator account. Its credentials and the session
-secret come from environment variables:
+secret come from environment variables, as does everything else the app and
+its commands need; variables marked "migration" are read only by
+`npm run legacy:migrate`:
 
-| Variable                | Required | Meaning                                                                     |
-| ----------------------- | -------- | --------------------------------------------------------------------------- |
-| `ADMIN_USERNAME`        | yes      | Username of the administrator                                               |
-| `ADMIN_PASSWORD_HASH`   | yes      | Hash of the administrator password, printed by `npm run auth:hash-password` |
-| `SESSION_SECRET`        | yes      | Key that encrypts the session cookie, at least 32 characters                |
-| `SESSION_COOKIE_SECURE` | no       | `true` (default) or `false`; see [HTTPS](#https) below                      |
+| Variable                      | Required  | Meaning                                                                                |
+| ----------------------------- | --------- | -------------------------------------------------------------------------------------- |
+| `ADMIN_USERNAME`              | yes       | Username of the administrator                                                          |
+| `ADMIN_PASSWORD_HASH`         | yes       | Hash of the administrator password, printed by `npm run auth:hash-password`            |
+| `SESSION_SECRET`              | yes       | Key that encrypts the session cookie, at least 32 characters                           |
+| `SESSION_COOKIE_SECURE`       | no        | `true` (default) or `false`; see [HTTPS](#https) below                                 |
+| `DATABASE_URL`                | yes       | PostgreSQL connection URL; see [Database](#database) below                             |
+| `LEGACY_DATABASE_URL`         | migration | URL of the restored old database; see [Moving data](#moving-data-from-the-old-version) |
+| `LEGACY_CATEGORY_LAYOUT_FILE` | migration | Path to the layout file (categories and accounts), kept outside the repository         |
 
 Generate the password hash and the secret:
 
@@ -83,24 +93,134 @@ such as the sign-in page, are sent with a long `s-maxage` because Next.js
 prerenders them, and a shared cache would keep serving an old copy after an
 update. Cache only the files under `/_next/static/`.
 
+## Database
+
+FBO keeps its data in PostgreSQL 18. For development, `compose.yaml` runs one
+in Docker on `127.0.0.1:5433`, a port chosen so that it does not collide with
+a server on the default 5432. Its user, password and database are all `fbo`;
+the password is for this local database only. Add the URL to `.env.local`:
+
+```bash
+DATABASE_URL=postgres://fbo:fbo@127.0.0.1:5433/fbo
+```
+
+Then start the server and create the schema:
+
+```bash
+docker compose up -d   # start PostgreSQL in the background
+npm run db:migrate     # apply the migrations the database does not have yet
+```
+
+`npm run db:migrate` applies the SQL migrations from `drizzle/` in order and
+skips those already applied, so running it again changes nothing. Run it after
+every update that brings new migrations. The data lives in a named Docker
+volume: `docker compose down` keeps it, `docker compose down -v` deletes it.
+The Compose project is always called `fbo-dev`, whatever the directory is
+named; `COMPOSE_PROJECT_NAME` or `docker compose -p <name>` still override it,
+for example to give parallel worktrees separate stacks; only one of them can
+listen on port 5433 at a time.
+
+The database tests in `npm test`, the browser tests in `npm run test:e2e` and
+`npm run verify` need the server running. They use their own databases,
+`fbo_test` and `fbo_test_legacy` for the database tests and `fbo_e2e` for the
+browser tests, on the same server, which they create when missing and empty on
+every run; set `TEST_DATABASE_URL`, `TEST_LEGACY_DATABASE_URL` and
+`E2E_DATABASE_URL` to use others. The test
+setup refuses any database whose name does not end in `_test`, `_test_legacy`
+or `_e2e`, so it cannot empty the development database by mistake.
+
+## Moving data from the old version
+
+`npm run legacy:migrate` moves the accounts and categories of the old version
+into the new database, once. It copies the active accounts with their type,
+currency and reporting scope and skips the inactive ones. It copies every
+category with its kind, merges categories of one parent, and root categories
+among themselves, whose names differ only in case or spacing (the old IDs of
+all merged rows map to the one new category), and takes the order of the categories, the categories that take
+labels instead of subcategories, and any account renames and merges from a
+layout file.
+
+1. Restore the dump of the old database into a database of its own, for
+   example `fbo_legacy` on the local server. The command only reads it.
+2. Write the category layout file and keep it outside the repository. It lists
+   the root categories in display order, and under each its subcategories in
+   display order; `"type": "labeled"` marks a root category that takes labels,
+   and such a category cannot have `children`. Names are matched with the old
+   categories regardless of case and spacing, and the spelling in the file
+   becomes the name of the new category. To rename a root category, give its
+   old name in `"legacyName"`: the entry then matches the old category of that
+   name, the new category gets `"name"`, and the summary lists the rename. Two
+   entries cannot match the same old category, and the new names must stay
+   unique. Subcategories are always matched by their own name.
+
+   The same file can rename and merge accounts in an optional `"accounts"`
+   list. Each entry makes one new account named `"name"` from the old active
+   accounts named in `"legacyNames"`, matched regardless of case and spacing:
+   one old name renames an account, several merge accounts into one, and every
+   old account ID maps to it, so their later data lands on the one account.
+   Merged accounts must share type, currency and reporting scope, and the new
+   account keeps the creation time of the oldest. Accounts the list does not
+   name move over unchanged. An old name that matches no active account, an
+   old account in two entries and a new name that collides with another
+   account's name, regardless of case and spacing, are errors. The summary
+   lists the renamed and merged accounts. A made-up example:
+
+   ```json
+   {
+     "roots": [
+       { "name": "Category A", "children": ["Subcategory 2", "Subcategory 1"] },
+       { "name": "Category B", "type": "labeled" },
+       { "name": "Earnings", "legacyName": "Income", "children": ["Salary", "Bonus"] }
+     ],
+     "accounts": [
+       { "name": "Shared account", "legacyNames": ["bank 1", "bank 2"] },
+       { "name": "Cash", "legacyNames": ["cash 1"] }
+     ]
+   }
+   ```
+
+3. Set `DATABASE_URL` to a new database with the schema applied
+   (`npm run db:migrate`) and no accounts or categories yet,
+   `LEGACY_DATABASE_URL` to the restored old database and
+   `LEGACY_CATEGORY_LAYOUT_FILE` to the layout file, for example in
+   `.env.local`.
+4. Run `npm run legacy:migrate` once and read the summary it prints.
+
+Every root category of the old database needs an entry in the layout file.
+Subcategories without an entry go after the listed ones of their root
+category, oldest first, and the summary names them; entries without a
+matching category only produce a warning. The command refuses to run when
+both URLs point at the same database, and it checks every rule before it
+writes: when the old data break one (an inactive account that other rows
+still refer to, a third category level, an unknown value), it lists every
+problem and writes nothing. The write is one transaction into empty tables,
+so a second run refuses and changes nothing. To try again, start from a fresh
+new database: recreate it, run `npm run db:migrate`, then
+`npm run legacy:migrate`.
+
 ## Scripts
 
-| Command                      | What it does                                     |
-| ---------------------------- | ------------------------------------------------ |
-| `npm run dev`                | Start the development server                     |
-| `npm run build`              | Create a production build                        |
-| `npm run start`              | Serve the production build                       |
-| `npm run lint`               | Check the code with ESLint                       |
-| `npm test`                   | Run the unit tests once                          |
-| `npm run test:watch`         | Rerun the unit tests on every change             |
-| `npm run test:e2e`           | Run the browser tests on the production build    |
-| `npm run verify`             | Run lint, build, unit and browser tests in order |
-| `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line             |
+| Command                      | What it does                                               |
+| ---------------------------- | ---------------------------------------------------------- |
+| `npm run dev`                | Start the development server                               |
+| `npm run build`              | Create a production build                                  |
+| `npm run start`              | Serve the production build                                 |
+| `npm run lint`               | Check the code with ESLint                                 |
+| `npm test`                   | Run the unit and database tests once                       |
+| `npm run test:watch`         | Rerun the unit and database tests on every change          |
+| `npm run test:e2e`           | Run the browser tests on the production build              |
+| `npm run verify`             | Run lint, build, unit, database and browser tests in order |
+| `npm run db:migrate`         | Apply pending migrations to `DATABASE_URL`                 |
+| `npm run db:generate`        | Write a migration for changes in the schema                |
+| `npm run legacy:migrate`     | Move accounts and categories from the old version, once    |
+| `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line                       |
 
 `npm run test:e2e` starts the production build on port 3100 with a test-only
-account, so run `npm run build` first. The first run needs the browser:
-`npx playwright install chromium`.
+account and the `fbo_e2e` database filled with made-up accounts and
+categories, so run `npm run build` first and keep PostgreSQL running. The
+first run needs the browser: `npx playwright install chromium`.
 
 ## Stack
 
-Next.js (App Router), React, TypeScript and Tailwind CSS.
+Next.js (App Router), React, TypeScript and Tailwind CSS; PostgreSQL with
+Drizzle ORM and node-postgres.

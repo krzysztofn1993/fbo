@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-FBO is a self-hosted household finance web app. Stack: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, npm. The repository holds the application scaffold, sign-in for the single administrator (`src/lib/auth/`, `src/proxy.ts`, `src/app/login/`), the first domain rule (split totals in `src/lib/money/`), the data layer (PostgreSQL 18 through Drizzle ORM and `pg`: schema and helpers in `src/lib/db/`, generated migrations in `drizzle/`), their tests, and the CI gate.
+FBO is a self-hosted household finance web app. Stack: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, npm. The repository holds the application scaffold, sign-in for the single administrator (`src/lib/auth/`, `src/proxy.ts`, `src/app/login/`), the first domain rule (split totals in `src/lib/money/`), the data layer (PostgreSQL 18 through Drizzle ORM and `pg`: schema and helpers in `src/lib/db/`, generated migrations in `drizzle/`), the accounts and categories pages (`src/app/accounts/`, `src/app/categories/`, queries in `src/lib/catalog/`, Polish names in `src/i18n/pl.ts`), their tests, and the CI gate.
 
 ## Hard Rules
 
@@ -50,7 +50,8 @@ Run `npm run verify` before every commit; it must exit 0. GitHub Actions runs th
 - The Node.js version in `@.nvmrc` is the exception: it is pinned to the major only.
 - Pin container images by tag and digest (`name:tag@sha256:…`) under the same 14-day rule, and keep `@compose.yaml` and `@.github/workflows/ci.yml` on the same image.
 - The schema and every module that a plain `node` script or a test setup loads import only packages and relative paths with the `.ts` extension, never `@/` or `server-only`, and use erasable TypeScript syntax only.
-- Enum values in the code and the database are English identifiers; names shown to the user live only in the translation file.
+- Enum values in the code and the database are English identifiers; names shown to the user live only in the translation file, `src/i18n/pl.ts`.
+- Pages get the database from `getDb()` in `src/lib/db/client.ts` only after `verifySession()`, inside `<Suspense>`, so `next build` never connects; queries take the handle as a parameter.
 - New IDs are UUIDv7 given by the database (`uuidv7()` as the column default); do not generate IDs in the application.
 - Represent money as `bigint` in the smallest currency unit, never as `number`; this is why `target` in `@tsconfig.json` is ES2020.
 
@@ -61,7 +62,7 @@ Run `npm run verify` before every commit; it must exit 0. GitHub Actions runs th
 - Database tests (`*.db.test.ts`) need the local database, so `npm test` and `npm run verify` fail without it. The `db` global setup creates `fbo_test` and `fbo_test_legacy` when missing (override with `TEST_DATABASE_URL` and `TEST_LEGACY_DATABASE_URL`), drops and recreates their schema, and applies the migrations to `fbo_test`. The helper in `src/lib/db/test-database.ts` refuses any database whose name does not end in `_test`, `_test_legacy` or `_e2e`. Database test files run one at a time; empty the tables with `truncateTables()` before each test.
 - Import code under test through the `@/` alias.
 - Component tests need jsdom and Testing Library; add them in the change that first needs them.
-- E2E tests live in `e2e/*.spec.ts` and run in Playwright with Chromium only, configured in `@playwright.config.ts`. They start `next start` on port 3100, so they need a prior `npm run build`, and pass the server a test-only account and a random session secret. These four variables take precedence over a local `.env.local`, but any other variable set there still reaches the server, and outside CI a server already listening on port 3100 is reused.
+- E2E tests live in `e2e/*.spec.ts` and run in Playwright with Chromium only, configured in `@playwright.config.ts`. They start `next start` on port 3100, so they need a prior `npm run build`, and pass the server a test-only account, a random session secret and a `DATABASE_URL` for the `fbo_e2e` database (override with `E2E_DATABASE_URL`). These five variables take precedence over a local `.env.local`, but any other variable set there still reaches the server, and outside CI a server already listening on port 3100 is reused. The global setup in `e2e/global-setup.ts` recreates `fbo_e2e` with the same name guard, applies the migrations and writes the made-up data from `e2e/fixtures/catalog.ts`, so E2E tests need the local database running.
 - `e2e/fixtures/` holds only test data; never put a real account or secret there.
 - Report only tests that actually ran.
 

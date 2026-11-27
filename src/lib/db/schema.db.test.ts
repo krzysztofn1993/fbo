@@ -8,9 +8,20 @@ import {
   categories,
   legacyAccountMap,
   legacyCategoryMap,
+  legacyClassificationResults,
+  legacyTransactionMap,
+  legacyTransactionSources,
+  possibleDuplicates,
+  transactionParts,
+  transactions,
 } from "@/lib/db/schema";
 import { testDatabaseUrl, truncateTables } from "@/lib/db/test-database";
-import { LegacyAccountIdSchema, LegacyCategoryIdSchema } from "@/lib/ids";
+import {
+  LegacyAccountIdSchema,
+  LegacyCategoryIdSchema,
+  LegacyClassificationResultIdSchema,
+  LegacyTransactionIdSchema,
+} from "@/lib/ids";
 
 const pool = new pg.Pool({ connectionString: testDatabaseUrl(), max: 2 });
 const db = drizzle({ client: pool });
@@ -24,6 +35,9 @@ const LEGACY_ACCOUNT_ID_1 = LegacyAccountIdSchema.parse(LEGACY_ID_1);
 const LEGACY_ACCOUNT_ID_2 = LegacyAccountIdSchema.parse(LEGACY_ID_2);
 const LEGACY_CATEGORY_ID_1 = LegacyCategoryIdSchema.parse(LEGACY_ID_1);
 const LEGACY_CATEGORY_ID_2 = LegacyCategoryIdSchema.parse(LEGACY_ID_2);
+const LEGACY_TRANSACTION_ID_1 = LegacyTransactionIdSchema.parse(LEGACY_ID_1);
+const LEGACY_TRANSACTION_ID_2 = LegacyTransactionIdSchema.parse(LEGACY_ID_2);
+const LEGACY_RESULT_ID_1 = LegacyClassificationResultIdSchema.parse(LEGACY_ID_1);
 
 beforeEach(async () => {
   await truncateTables(pool);
@@ -268,5 +282,191 @@ describe("legacy maps", () => {
       code: RESTRICT_VIOLATION,
       constraint: "legacy_category_map_category_id_categories_id_fk",
     });
+  });
+});
+
+async function insertTransaction(overrides: Partial<typeof transactions.$inferInsert> = {}) {
+  const [owner] = overrides.accountId
+    ? [{ id: overrides.accountId }]
+    : await db.insert(accounts).values(account()).returning();
+  const [row] = await db
+    .insert(transactions)
+    .values({ accountId: owner.id, bookingDate: "2025-01-15", amountMinor: -1250n, ...overrides })
+    .returning();
+  return row;
+}
+
+describe("transactions", () => {
+  it("gets a UUIDv7 ID and timestamps from the database", async () => {
+    const first = await insertTransaction();
+    const second = await insertTransaction({ accountId: first.accountId });
+
+    expect(first.id).toMatch(UUID_V7);
+    expect(second.id).toMatch(UUID_V7);
+    expect(second.id).not.toBe(first.id);
+    expect(first.createdAt).toBeInstanceOf(Date);
+    expect(first.updatedAt).toBeInstanceOf(Date);
+  });
+
+  it("returns the amount as an exact bigint and the dates as YYYY-MM-DD", async () => {
+    // Beyond Number.MAX_SAFE_INTEGER, so a number would lose the last digit.
+    const amountMinor = -(2n ** 53n + 1n);
+    const inserted = await insertTransaction({
+      bookingDate: "2025-01-05",
+      operationDate: "2024-12-31",
+      amountMinor,
+    });
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, inserted.id));
+    expect(row.amountMinor).toBe(amountMinor);
+    expect(row.bookingDate).toBe("2025-01-05");
+    expect(row.operationDate).toBe("2024-12-31");
+    expect(row.reportingScopeOverride).toBeNull();
+    expect(row.description).toBeNull();
+  });
+
+  it("does not delete an account that still has transactions", async () => {
+    const transaction = await insertTransaction();
+
+    expect(
+      await violation(db.delete(accounts).where(eq(accounts.id, transaction.accountId))),
+    ).toEqual({ code: RESTRICT_VIOLATION, constraint: "transactions_account_id_accounts_id_fk" });
+  });
+});
+
+describe("transaction parts", () => {
+  it("gets a UUIDv7 ID, the standard reporting class and no approval by default", async () => {
+    const transaction = await insertTransaction();
+    const category = await insertRoot("Kategoria A", 0);
+
+    const [part] = await db
+      .insert(transactionParts)
+      .values({ transactionId: transaction.id, categoryId: category.id, amountMinor: -1250n })
+      .returning();
+
+    expect(part.id).toMatch(UUID_V7);
+    expect(part.amountMinor).toBe(-1250n);
+    expect(part.reportingClass).toBe("standard");
+    expect(part.approved).toBe(false);
+    expect(part.label).toBeNull();
+  });
+
+  it("does not delete a category that parts point at", async () => {
+    const transaction = await insertTransaction();
+    const category = await insertRoot("Kategoria A", 0);
+    await db
+      .insert(transactionParts)
+      .values({ transactionId: transaction.id, categoryId: category.id, amountMinor: -1250n });
+
+    expect(await violation(db.delete(categories).where(eq(categories.id, category.id)))).toEqual({
+      code: RESTRICT_VIOLATION,
+      constraint: "transaction_parts_category_id_categories_id_fk",
+    });
+  });
+});
+
+describe("deleting a transaction", () => {
+  it("deletes its parts, source, old classification results and duplicate pairs", async () => {
+    const transaction = await insertTransaction();
+    const other = await insertTransaction({ accountId: transaction.accountId });
+    const third = await insertTransaction({ accountId: transaction.accountId });
+    const category = await insertRoot("Kategoria A", 0);
+
+    await db
+      .insert(transactionParts)
+      .values({ transactionId: transaction.id, categoryId: category.id, amountMinor: -1250n });
+    await db
+      .insert(legacyTransactionSources)
+      .values({ transactionId: transaction.id, sourceKind: "legacy_excel" });
+    await db.insert(legacyClassificationResults).values({
+      legacyId: LEGACY_RESULT_ID_1,
+      transactionId: transaction.id,
+      categoryId: category.id,
+      legacyRuleIds: [],
+      classifierType: "regex_rule",
+      classifierVersion: "1",
+      provenance: {},
+      status: "suggested",
+      createdAt: new Date("2025-01-16T10:00:00Z"),
+      updatedAt: new Date("2025-01-16T10:00:00Z"),
+    });
+    // The transaction on either side of a pair.
+    await db.insert(possibleDuplicates).values([
+      { firstTransactionId: transaction.id, secondTransactionId: other.id, dayDifference: 0 },
+      { firstTransactionId: third.id, secondTransactionId: transaction.id, dayDifference: 2 },
+      { firstTransactionId: other.id, secondTransactionId: third.id, dayDifference: 1 },
+    ]);
+
+    await db.delete(transactions).where(eq(transactions.id, transaction.id));
+
+    expect(await db.select().from(transactionParts)).toEqual([]);
+    expect(await db.select().from(legacyTransactionSources)).toEqual([]);
+    expect(await db.select().from(legacyClassificationResults)).toEqual([]);
+    const pairs = await db.select().from(possibleDuplicates);
+    expect(pairs.map((pair) => [pair.firstTransactionId, pair.secondTransactionId])).toEqual([
+      [other.id, third.id],
+    ]);
+  });
+
+  it("is refused while the transaction map points at it", async () => {
+    const transaction = await insertTransaction();
+    await db
+      .insert(legacyTransactionMap)
+      .values({ legacyId: LEGACY_TRANSACTION_ID_1, transactionId: transaction.id });
+
+    expect(
+      await violation(db.delete(transactions).where(eq(transactions.id, transaction.id))),
+    ).toEqual({
+      code: RESTRICT_VIOLATION,
+      constraint: "legacy_transaction_map_transaction_id_transactions_id_fk",
+    });
+  });
+});
+
+describe("legacy transaction map", () => {
+  it("maps one old transaction to one transaction", async () => {
+    const transaction = await insertTransaction();
+    await db
+      .insert(legacyTransactionMap)
+      .values({ legacyId: LEGACY_TRANSACTION_ID_1, transactionId: transaction.id });
+
+    expect(
+      await violation(
+        db
+          .insert(legacyTransactionMap)
+          .values({ legacyId: LEGACY_TRANSACTION_ID_2, transactionId: transaction.id }),
+      ),
+    ).toEqual({ code: UNIQUE_VIOLATION, constraint: "legacy_transaction_map_transaction_id_key" });
+  });
+});
+
+describe("possible duplicates", () => {
+  it("rejects a pair of a transaction with itself", async () => {
+    const transaction = await insertTransaction();
+
+    expect(
+      await violation(
+        db.insert(possibleDuplicates).values({
+          firstTransactionId: transaction.id,
+          secondTransactionId: transaction.id,
+          dayDifference: 0,
+        }),
+      ),
+    ).toEqual({ code: CHECK_VIOLATION, constraint: "possible_duplicates_distinct_check" });
+  });
+
+  it("rejects a negative day difference", async () => {
+    const first = await insertTransaction();
+    const second = await insertTransaction({ accountId: first.accountId });
+
+    expect(
+      await violation(
+        db.insert(possibleDuplicates).values({
+          firstTransactionId: first.id,
+          secondTransactionId: second.id,
+          dayDifference: -1,
+        }),
+      ),
+    ).toEqual({ code: CHECK_VIOLATION, constraint: "possible_duplicates_day_difference_check" });
   });
 });

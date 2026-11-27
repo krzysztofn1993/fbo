@@ -234,6 +234,39 @@ describe("parseCategoryLayout", () => {
     ]);
   });
 
+  it("reports a malformed field together with the rest of the problems of the file", () => {
+    // A bad field in one entry hides neither the other checks of that entry
+    // nor the problems of later entries, and the problems keep file order.
+    expect(
+      problemsOf({
+        roots: [
+          { name: "Kategoria A", legacyName: 1, childern: [] },
+          { name: "kategoria a", type: "standard", children: ["Podkategoria 1", 2] },
+        ],
+        accounts: [{ name: "Konto A", legacyNames: "bank 1", extra: true }],
+      }),
+    ).toEqual([
+      'roots[0] has an unknown field "childern".',
+      'roots[0] "Kategoria A": "legacyName" must be a non-empty string when present.',
+      'roots[1] "kategoria a": "type" must be "labeled" when present.',
+      'roots[1] "kategoria a" repeats the name of roots[0].',
+      'roots[1] "kategoria a": children[1] must be a non-empty string.',
+      'accounts[0] has an unknown field "extra".',
+      'accounts[0] "Konto A": "legacyNames" must be a non-empty array of names.',
+    ]);
+  });
+
+  it("rejects null in place of an optional field", () => {
+    expect(
+      problemsOf({ roots: [{ name: "Kategoria A", legacyName: null, type: null, children: null }] }),
+    ).toEqual([
+      'roots[0] "Kategoria A": "legacyName" must be a non-empty string when present.',
+      'roots[0] "Kategoria A": "type" must be "labeled" when present.',
+      'roots[0] "Kategoria A": "children" must be an array of names.',
+    ]);
+    expect(problemsOf({ roots: [], accounts: null })).toEqual(['"accounts" must be an array.']);
+  });
+
   it("allows renaming one root to the old name of another renamed root", () => {
     const result = parseCategoryLayout(
       JSON.stringify({

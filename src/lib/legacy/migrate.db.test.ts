@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { accounts, categories, legacyAccountMap, legacyCategoryMap } from "@/lib/db/schema";
 import { testDatabaseUrl, testLegacyDatabaseUrl, truncateTables } from "@/lib/db/test-database";
+import { LegacyAccountIdSchema, LegacyCategoryIdSchema } from "@/lib/ids";
 import {
   ACCOUNT_BANK_1,
   ACCOUNT_CASH_1,
@@ -136,13 +137,14 @@ describe("runLegacyMigration", () => {
     expect(merged).toBeDefined();
     expect(categoryIdOf.get(SUB_B_BONUS_NEW)).toBe(merged);
     expect(categoryMap.filter((row) => row.categoryId === merged)).toHaveLength(2);
-    const mergedRow = byId.get(merged ?? "");
+    const mergedRow = merged === undefined ? undefined : byId.get(merged);
     expect(mergedRow?.kind).toBe("income");
     expect(mergedRow?.createdAt.toISOString()).toBe("2024-01-04T12:00:00.000Z");
     expect(mergedRow?.updatedAt.toISOString()).toBe("2024-01-08T12:00:00.000Z");
 
     for (const legacyId of [ROOT_A, ROOT_B, ROOT_C, SUB_A1, SUB_A2, SUB_A3, SUB_B_SALARY]) {
-      expect(byId.has(categoryIdOf.get(legacyId) ?? "")).toBe(true);
+      const categoryId = categoryIdOf.get(legacyId);
+      expect(categoryId !== undefined && byId.has(categoryId)).toBe(true);
     }
 
     if (outcome.status === "migrated") {
@@ -177,7 +179,7 @@ describe("runLegacyMigration", () => {
   it("writes nothing when a category is on a third level", async () => {
     await insertLegacyCategories(legacyPool, [
       {
-        id: "c0000000-0000-4000-8000-000000000031",
+        id: LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000031"),
         parentId: SUB_A1,
         name: "Podkategoria 1a",
         kind: "expense",
@@ -212,7 +214,7 @@ describe("runLegacyMigration", () => {
   it("writes nothing when a root category has no entry in the layout file", async () => {
     await insertLegacyCategories(legacyPool, [
       {
-        id: "c0000000-0000-4000-8000-000000000004",
+        id: LegacyCategoryIdSchema.parse("c0000000-0000-4000-8000-000000000004"),
         parentId: null,
         name: "Kategoria D",
         kind: "expense",
@@ -228,6 +230,24 @@ describe("runLegacyMigration", () => {
       expect(outcome.problems.join("\n")).toContain("Kategoria D");
     }
     expect(await rowCounts()).toEqual(NO_ROWS);
+  });
+
+  it("writes nothing when an old row has an unexpected shape", async () => {
+    // The made-up old schema forbids it, so the column is relaxed for this test only.
+    await legacyPool.query("ALTER TABLE categories ALTER COLUMN is_active DROP NOT NULL");
+    try {
+      await legacyPool.query("UPDATE categories SET is_active = NULL WHERE id = $1", [SUB_A1]);
+
+      const outcome = await migrate();
+      expect(outcome).toEqual({
+        status: "invalid",
+        problems: [expect.stringContaining('categories row 4, column "is_active"')],
+      });
+      expect(await rowCounts()).toEqual(NO_ROWS);
+    } finally {
+      await truncateTables(legacyPool);
+      await legacyPool.query("ALTER TABLE categories ALTER COLUMN is_active SET NOT NULL");
+    }
   });
 
   it("writes nothing when the layout file cannot be read", async () => {
@@ -251,7 +271,7 @@ describe("runLegacyMigration", () => {
   });
 
   describe("with accounts renamed and merged by the layout file", () => {
-    const ACCOUNT_BANK_2 = "a0000000-0000-4000-8000-000000000004";
+    const ACCOUNT_BANK_2 = LegacyAccountIdSchema.parse("a0000000-0000-4000-8000-000000000004");
 
     beforeEach(async () => {
       await insertLegacyAccounts(legacyPool, [

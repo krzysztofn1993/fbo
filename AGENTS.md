@@ -35,7 +35,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `npm run test:e2e` runs the Playwright suite against the production build; run `npm run build` first.
 - `npm run db:generate` writes a new SQL migration to `drizzle/` from changes in `src/lib/db/schema.ts`; commit it together with the schema and never edit an applied migration. What Drizzle cannot express (such as an expression index with `NULLS NOT DISTINCT`) goes into a custom migration from `npx drizzle-kit generate --custom --name <name>`.
 - `npm run db:migrate` applies the pending migrations to `DATABASE_URL` (from the environment or `.env.local`); running it again changes nothing.
-- `npm run legacy:migrate` moves the accounts and categories of the old version from `LEGACY_DATABASE_URL` into the empty tables of `DATABASE_URL`, once, with the category order from the file in `LEGACY_CATEGORY_LAYOUT_FILE` (format in `@README.md`); a second run refuses. The translation rules live in `src/lib/legacy/`; its database tests use a made-up old database, never real data.
+- `npm run legacy:migrate` moves the accounts and categories of the old version from `LEGACY_DATABASE_URL` into the empty tables of `DATABASE_URL`, once, with the category order, root category renames, and account renames and merges from the file in `LEGACY_CATEGORY_LAYOUT_FILE` (format in `@README.md`); a second run refuses. The translation rules live in `src/lib/legacy/`; its database tests use a made-up old database, never real data.
 - `npm run auth:hash-password` reads a password (twice on a terminal, one line from a pipe) and prints the `ADMIN_PASSWORD_HASH=` line.
 - `npm run verify` runs lint, then build, then unit and database tests, then E2E tests, and stops at the first failure.
 

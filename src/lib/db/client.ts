@@ -35,7 +35,15 @@ export function getDb(): DbResult {
     return { ok: false };
   }
 
-  const pool = new pg.Pool({ connectionString: result.url });
+  const pool = new pg.Pool({
+    connectionString: result.url,
+    // pg waits for a new connection without limit by default, so a database
+    // host that stops answering would leave a page on its loading state until
+    // the operating system gives up on the TCP connection. Five seconds is far
+    // above a healthy connect on the same host or network and short enough
+    // for the page to fail visibly instead of hanging.
+    connectionTimeoutMillis: 5_000,
+  });
   // An idle connection that breaks (for example when the server restarts)
   // emits an error on the pool; without a listener it would end the process.
   pool.on("error", (error) => {

@@ -57,6 +57,22 @@ export function isSameDatabase(first: string, second: string): boolean {
   return a.host === b.host && a.port === b.port && a.database === b.database;
 }
 
+/**
+ * Keeps the first error a connection emits outside a query, for example when
+ * the server closes an idle connection. Without a listener `pg` raises such an
+ * error as an uncaught `error` event and ends the process; with it, the next
+ * query on that connection fails and the run reports a failure.
+ */
+function connectionErrorTrap(): { listener: (error: Error) => void; message: () => string } {
+  let first: Error | undefined;
+  return {
+    listener: (error) => {
+      first ??= error;
+    },
+    message: () => (first === undefined ? "" : `\nThe connection was lost: ${first.message}`),
+  };
+}
+
 // Drizzle wraps database errors; the cause carries the PostgreSQL message.
 function describeError(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -82,12 +98,17 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
   }
 
   const legacy = new pg.Client({ connectionString: options.legacyDatabaseUrl });
+  const legacyErrors = connectionErrorTrap();
+  legacy.on("error", legacyErrors.listener);
   let snapshot: LegacySnapshot;
   try {
     await legacy.connect();
     snapshot = await readLegacySnapshot(legacy);
   } catch (error) {
-    return { status: "failed", message: `Reading the old database failed: ${describeError(error)}` };
+    return {
+      status: "failed",
+      message: `Reading the old database failed: ${describeError(error)}${legacyErrors.message()}`,
+    };
   } finally {
     await legacy.end().catch(() => undefined);
   }
@@ -98,13 +119,21 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
   }
 
   const pool = new pg.Pool({ connectionString: options.newDatabaseUrl, max: 1 });
+  const writeErrors = connectionErrorTrap();
+  // The pool emits errors of idle connections; a connection checked out for
+  // the transaction emits them itself, so it gets the listener as well.
+  pool.on("error", writeErrors.listener);
+  pool.on("connect", (client) => client.on("error", writeErrors.listener));
   try {
     await writeMigrationPlan(drizzle({ client: pool }), translation.plan);
   } catch (error) {
     if (error instanceof AlreadyMigratedError) {
       return { status: "refused", message: error.message };
     }
-    return { status: "failed", message: `Writing the new database failed: ${describeError(error)}` };
+    return {
+      status: "failed",
+      message: `Writing the new database failed: ${describeError(error)}${writeErrors.message()}`,
+    };
   } finally {
     await pool.end().catch(() => undefined);
   }

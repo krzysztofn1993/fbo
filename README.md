@@ -134,9 +134,9 @@ or `_e2e`, so it cannot empty the development database by mistake.
 `npm run legacy:migrate` moves the accounts and categories of the old version
 into the new database, once. It copies the active accounts with their type,
 currency and reporting scope and skips the inactive ones. It copies every
-category with its kind, merges subcategories of one parent whose names differ
-only in case or spacing (the old IDs of all merged rows map to the one new
-category), and takes the order of the categories, the categories that take
+category with its kind, merges categories of one parent, and root categories
+among themselves, whose names differ only in case or spacing (the old IDs of
+all merged rows map to the one new category), and takes the order of the categories, the categories that take
 labels instead of subcategories, and any account renames and merges from a
 layout file.
 

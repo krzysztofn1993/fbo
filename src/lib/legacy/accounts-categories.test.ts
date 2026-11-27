@@ -178,6 +178,115 @@ describe("accounts", () => {
   });
 });
 
+describe("renaming and merging accounts", () => {
+  function withAccounts(
+    rows: LegacyAccountRow[],
+    accounts: { name: string; legacyNames: string[] }[],
+  ): TranslationInput {
+    return input({ accounts: rows, layout: { roots: [], accounts } });
+  }
+
+  it("renames an account listed with one old name and keeps the others", () => {
+    const listed = account({ name: "Bank  1 " });
+    const other = account({ name: "cash 1", type: "cash", createdAt: day(3) });
+    const { plan, report } = translated(
+      withAccounts([listed, other], [{ name: "Konto główne", legacyNames: ["bank 1"] }]),
+    );
+    expect(plan.accounts.map((a) => [a.name, a.legacyIds])).toEqual([
+      ["Konto główne", [listed.id]],
+      ["cash 1", [other.id]],
+    ]);
+    expect(report.renamedAccounts).toEqual([{ from: "Bank  1 ", to: "Konto główne" }]);
+    expect(report.mergedAccounts).toEqual([]);
+    expect(report).toMatchObject({ accountsMigrated: 2, accountMapRows: 2 });
+  });
+
+  it("merges accounts into one, oldest first, and maps every old ID", () => {
+    const older = account({ name: "bank 2", createdAt: day(1), updatedAt: day(4) });
+    const newer = account({ name: "bank 1", createdAt: day(2), updatedAt: day(9) });
+    const { plan, report } = translated(
+      withAccounts([newer, older], [{ name: "Konto wspólne", legacyNames: ["bank 1", "bank 2"] }]),
+    );
+    expect(plan.accounts).toEqual([
+      {
+        key: older.id,
+        legacyIds: [older.id, newer.id],
+        name: "Konto wspólne",
+        type: "bank",
+        currency: "PLN",
+        reportingScope: "personal",
+        createdAt: day(1),
+        updatedAt: day(9),
+      },
+    ]);
+    expect(report.mergedAccounts).toEqual([{ name: "Konto wspólne", oldAccountCount: 2 }]);
+    expect(report.renamedAccounts).toEqual([]);
+    expect(report).toMatchObject({ accountsMigrated: 1, accountMapRows: 2 });
+  });
+
+  it("rejects a merge of accounts with a different type, currency or reporting scope", () => {
+    for (const overrides of [
+      { type: "cash" },
+      { currency: "EUR" },
+      { reportingScope: "business" },
+    ] satisfies Partial<LegacyAccountRow>[]) {
+      const problems = problemsOf(
+        withAccounts(
+          [account({ name: "bank 1" }), account({ name: "bank 2", ...overrides })],
+          [{ name: "Konto wspólne", legacyNames: ["bank 1", "bank 2"] }],
+        ),
+      );
+      expect(problems).toEqual([
+        expect.stringContaining(
+          'Layout account "Konto wspólne" merges accounts that differ in type, currency or reporting scope',
+        ),
+      ]);
+    }
+  });
+
+  it("rejects an old name that matches no account or only an inactive one", () => {
+    const problems = problemsOf(
+      withAccounts(
+        [account({ name: "bank 1" }), account({ name: "cash 9", isActive: false })],
+        [
+          { name: "Konto A", legacyNames: ["bank 7"] },
+          { name: "Konto B", legacyNames: ["cash 9"] },
+        ],
+      ),
+    );
+    expect(problems).toEqual([
+      'Layout account "Konto A" lists "bank 7", which matches no account.',
+      'Layout account "Konto B" lists "cash 9", which matches only an inactive account.',
+    ]);
+  });
+
+  it("rejects the same old account in two entries", () => {
+    const listed = account({ name: "bank 1" });
+    const problems = problemsOf(
+      withAccounts(
+        [listed],
+        [
+          { name: "Konto A", legacyNames: ["bank 1"] },
+          { name: "Konto B", legacyNames: ["BANK 1"] },
+        ],
+      ),
+    );
+    expect(problems).toEqual([
+      `Account "bank 1" (old ID ${listed.id}) is listed by layout accounts "Konto A" and "Konto B".`,
+    ]);
+  });
+
+  it("rejects a new name that collides with an account kept as it is", () => {
+    const kept = account({ name: "Konto A", createdAt: day(2) });
+    const problems = problemsOf(
+      withAccounts([account({ name: "bank 1" }), kept], [{ name: "konto  a", legacyNames: ["bank 1"] }]),
+    );
+    expect(problems).toEqual([
+      `Layout account "konto  a" would have the same name as account "Konto A" (old ID ${kept.id}).`,
+    ]);
+  });
+});
+
 describe("categories", () => {
   it("rejects an inactive category", () => {
     const inactive = category("Kategoria A", null, { isActive: false });
@@ -494,6 +603,8 @@ describe("report", () => {
       subcategories: 3,
       accountMapRows: 1,
       categoryMapRows: 6,
+      renamedAccounts: [],
+      mergedAccounts: [],
       mergedGroups: [{ name: "Premia", parentName: "Kategoria A", rowCount: 2 }],
       labeledCategories: ["Kategoria B"],
       renamedCategories: [],

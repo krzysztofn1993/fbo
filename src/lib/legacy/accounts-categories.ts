@@ -49,8 +49,9 @@ export type TranslationInput = {
 };
 
 export type NewAccount = {
-  /** Old ID of the account, used as the working key. */
+  /** Old ID of the leading (oldest) account, used as the working key. */
   key: string;
+  /** Every old ID merged into this account, the leading one first. */
   legacyIds: string[];
   name: string;
   type: AccountType;
@@ -96,12 +97,17 @@ export type MergedGroup = {
 };
 
 export type MigrationReport = {
+  /** New accounts; merged old accounts count once. */
   accountsMigrated: number;
   accountsSkipped: number;
   rootCategories: number;
   subcategories: number;
   accountMapRows: number;
   categoryMapRows: number;
+  /** Accounts renamed by a layout entry with one old name. */
+  renamedAccounts: { from: string; to: string }[];
+  /** Accounts made by a layout entry from several old accounts. */
+  mergedAccounts: { name: string; oldAccountCount: number }[];
   mergedGroups: MergedGroup[];
   labeledCategories: string[];
   /** Root categories renamed by a layout entry with `legacyName`. */
@@ -138,49 +144,145 @@ function describeRow(row: { id: string; name: string }): string {
   return `"${row.name}" (old ID ${row.id})`;
 }
 
+type ValidAccount = LegacyAccountRow & { type: AccountType; reportingScope: ReportingScope };
+
+/** Checks one active old account; problems go to `problems`. */
+function checkAccount(row: LegacyAccountRow, problems: string[]): row is ValidAccount {
+  const account = `Account ${describeRow(row)}`;
+  const typeKnown = isOneOf(accountType.enumValues, row.type);
+  const scopeKnown = isOneOf(reportingScope.enumValues, row.reportingScope);
+  const currencyValid = CURRENCY.test(row.currency);
+  if (!typeKnown) {
+    problems.push(`${account} has an unknown type "${row.type}".`);
+  }
+  if (!scopeKnown) {
+    problems.push(`${account} has an unknown reporting scope "${row.reportingScope}".`);
+  }
+  if (!currencyValid) {
+    problems.push(`${account} has a currency "${row.currency}" that is not three capitals.`);
+  }
+  return typeKnown && scopeKnown && currencyValid;
+}
+
 function translateAccounts(input: TranslationInput, problems: string[]) {
   const migrated: NewAccount[] = [];
+  const renamed: { from: string; to: string }[] = [];
+  const merged: { name: string; oldAccountCount: number }[] = [];
   let skipped = 0;
 
+  const active: LegacyAccountRow[] = [];
+  const inactiveNames = new Set<string>();
   for (const row of [...input.accounts].sort(byCreation)) {
-    const account = `Account ${describeRow(row)}`;
-    if (!row.isActive) {
-      skipped += 1;
-      if (input.referencedInactiveAccountIds.has(row.id)) {
-        problems.push(`${account} is inactive, so it is skipped, but other rows refer to it.`);
-      }
+    if (row.isActive) {
+      active.push(row);
       continue;
     }
-
-    const type = row.type;
-    const scope = row.reportingScope;
-    const typeKnown = isOneOf(accountType.enumValues, type);
-    const scopeKnown = isOneOf(reportingScope.enumValues, scope);
-    const currencyValid = CURRENCY.test(row.currency);
-    if (!typeKnown) {
-      problems.push(`${account} has an unknown type "${type}".`);
-    }
-    if (!scopeKnown) {
-      problems.push(`${account} has an unknown reporting scope "${scope}".`);
-    }
-    if (!currencyValid) {
-      problems.push(`${account} has a currency "${row.currency}" that is not three capitals.`);
-    }
-    if (typeKnown && scopeKnown && currencyValid) {
-      migrated.push({
-        key: row.id,
-        legacyIds: [row.id],
-        name: row.name,
-        type,
-        currency: row.currency,
-        reportingScope: scope,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-      });
+    skipped += 1;
+    inactiveNames.add(normalizeCategoryName(row.name));
+    if (input.referencedInactiveAccountIds.has(row.id)) {
+      problems.push(
+        `Account ${describeRow(row)} is inactive, so it is skipped, but other rows refer to it.`,
+      );
     }
   }
 
-  return { migrated, skipped };
+  // Old account ID → index of the layout entry that takes it.
+  const entryOf = new Map<string, number>();
+  const layoutAccounts = input.layout.accounts ?? [];
+  const groups: ValidAccount[][] = layoutAccounts.map(() => []);
+  layoutAccounts.forEach((entry, index) => {
+    for (const legacyName of entry.legacyNames) {
+      const key = normalizeCategoryName(legacyName);
+      const matches = active.filter((row) => normalizeCategoryName(row.name) === key);
+      if (matches.length === 0) {
+        problems.push(
+          inactiveNames.has(key)
+            ? `Layout account "${entry.name}" lists "${legacyName}", which matches only an inactive account.`
+            : `Layout account "${entry.name}" lists "${legacyName}", which matches no account.`,
+        );
+      }
+      for (const row of matches) {
+        const taken = entryOf.get(row.id);
+        if (taken !== undefined) {
+          problems.push(
+            `Account ${describeRow(row)} is listed by layout accounts ` +
+              `"${layoutAccounts[taken].name}" and "${entry.name}".`,
+          );
+          continue;
+        }
+        entryOf.set(row.id, index);
+        if (checkAccount(row, problems)) {
+          groups[index].push(row);
+        }
+      }
+    }
+  });
+
+  type Planned = { name: string; rows: ValidAccount[]; fromLayout: boolean };
+  const planned: Planned[] = [];
+  for (const row of active) {
+    if (!entryOf.has(row.id) && checkAccount(row, problems)) {
+      planned.push({ name: row.name, rows: [row], fromLayout: false });
+    }
+  }
+  layoutAccounts.forEach((entry, index) => {
+    const rows = groups[index].sort(byCreation);
+    if (rows.length === 0) {
+      return;
+    }
+    const values = (row: ValidAccount) => `${row.type}, ${row.currency}, ${row.reportingScope}`;
+    const kinds = new Set(rows.map(values));
+    if (kinds.size > 1) {
+      problems.push(
+        `Layout account "${entry.name}" merges accounts that differ in type, currency or ` +
+          `reporting scope: ${rows.map((row) => `${describeRow(row)}: ${values(row)}`).join("; ")}.`,
+      );
+      return;
+    }
+    planned.push({ name: entry.name, rows, fromLayout: true });
+    if (rows.length === 1) {
+      renamed.push({ from: rows[0].name, to: entry.name });
+    } else {
+      merged.push({ name: entry.name, oldAccountCount: rows.length });
+    }
+  });
+
+  // A name from the layout must not collide, regardless of case and spacing,
+  // with the name of an account that keeps its old name; accounts the layout
+  // does not list migrate unchanged, so they are not compared with each other.
+  // The parser already keeps the layout names apart.
+  const unlistedByName = new Map<string, Planned>();
+  for (const account of planned) {
+    if (!account.fromLayout) {
+      unlistedByName.set(normalizeCategoryName(account.name), account);
+    }
+  }
+  for (const account of planned) {
+    const other = account.fromLayout
+      ? unlistedByName.get(normalizeCategoryName(account.name))
+      : undefined;
+    if (other !== undefined) {
+      problems.push(
+        `Layout account "${account.name}" would have the same name as account ${describeRow(other.rows[0])}.`,
+      );
+    }
+  }
+
+  for (const { name, rows } of planned.sort((a, b) => byCreation(a.rows[0], b.rows[0]))) {
+    const lead = rows[0];
+    migrated.push({
+      key: lead.id,
+      legacyIds: rows.map((row) => row.id),
+      name,
+      type: lead.type,
+      currency: lead.currency,
+      reportingScope: lead.reportingScope,
+      createdAt: lead.createdAt,
+      updatedAt: new Date(Math.max(...rows.map((row) => row.updatedAt.getTime()))),
+    });
+  }
+
+  return { migrated, skipped, renamed, merged };
 }
 
 /**
@@ -409,8 +511,10 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
       accountsSkipped: accounts.skipped,
       rootCategories: rootCategories.length,
       subcategories: subcategories.length,
-      accountMapRows: accounts.migrated.length,
+      accountMapRows: accounts.migrated.reduce((sum, account) => sum + account.legacyIds.length, 0),
       categoryMapRows,
+      renamedAccounts: accounts.renamed,
+      mergedAccounts: accounts.merged,
       mergedGroups,
       labeledCategories,
       renamedCategories,

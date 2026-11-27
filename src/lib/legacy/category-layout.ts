@@ -1,14 +1,19 @@
 // Reads the category layout file: the order of the root categories and of the
-// subcategories under each, and which root categories take labels instead of
-// subcategories. The file is prepared once, outside the repository, from the
-// budget spreadsheet, and is a second input of the one-time migration.
+// subcategories under each, which root categories take labels instead of
+// subcategories, and the accounts to rename or merge. The file is prepared
+// once, outside the repository, from the budget spreadsheet, and is a second
+// input of the one-time migration.
 //
 // Format:
 //   { "roots": [ { "name": string, "legacyName"?: string, "type"?: "labeled",
-//                  "children"?: string[] } ] }
+//                  "children"?: string[] } ],
+//     "accounts"?: [ { "name": string, "legacyNames": string[] } ] }
 //
 // A root entry with "legacyName" matches the old root category of that name
-// and gives it "name" instead, which renames it during the migration.
+// and gives it "name" instead, which renames it during the migration. An
+// account entry matches the old active accounts named in "legacyNames" and
+// makes them one account named "name": one old name renames an account,
+// several merge accounts.
 //
 // Loaded by the `legacy:migrate` script under plain `node`, so it imports only
 // `node:` modules and uses only erasable syntax.
@@ -25,13 +30,26 @@ export type LayoutRoot = {
   children: string[];
 };
 
-export type CategoryLayout = { roots: LayoutRoot[] };
+export type LayoutAccount = {
+  /** Name of the new account. */
+  name: string;
+  /** Names of the old accounts it replaces; at least one. */
+  legacyNames: string[];
+};
+
+export type CategoryLayout = {
+  roots: LayoutRoot[];
+  /** Present only when the file has an "accounts" array. */
+  accounts?: LayoutAccount[];
+};
 
 export type CategoryLayoutResult =
   | { ok: true; layout: CategoryLayout }
   | { ok: false; problems: string[] };
 
+const TOP_KEYS = new Set(["roots", "accounts"]);
 const ROOT_KEYS = new Set(["name", "legacyName", "type", "children"]);
+const ACCOUNT_KEYS = new Set(["name", "legacyNames"]);
 
 /**
  * The one name normalization of the migration: trims, collapses inner
@@ -67,6 +85,11 @@ export function parseCategoryLayout(text: string): CategoryLayoutResult {
   }
 
   const problems: string[] = [];
+  for (const key of Object.keys(data)) {
+    if (!TOP_KEYS.has(key)) {
+      problems.push(`The category layout file has an unknown field "${key}".`);
+    }
+  }
   const roots: LayoutRoot[] = [];
   const rootNames = new Map<string, number>();
   // Normalized old name each entry matches → index of the first such entry.
@@ -148,10 +171,80 @@ export function parseCategoryLayout(text: string): CategoryLayoutResult {
     });
   });
 
+  const accounts = data.accounts === undefined ? undefined : parseAccounts(data.accounts, problems);
+
   if (problems.length > 0) {
     return { ok: false, problems };
   }
-  return { ok: true, layout: { roots } };
+  return { ok: true, layout: accounts === undefined ? { roots } : { roots, accounts } };
+}
+
+/** Checks the "accounts" array; problems go to `problems`. */
+function parseAccounts(value: unknown, problems: string[]): LayoutAccount[] {
+  if (!Array.isArray(value)) {
+    problems.push('"accounts" must be an array.');
+    return [];
+  }
+
+  const accounts: LayoutAccount[] = [];
+  // Normalized new name / old name → index of the first entry that has it.
+  const newNames = new Map<string, number>();
+  const oldNames = new Map<string, number>();
+
+  value.forEach((entry: unknown, index) => {
+    const where = `accounts[${index}]`;
+    if (!isRecord(entry)) {
+      problems.push(`${where} must be an object.`);
+      return;
+    }
+    for (const key of Object.keys(entry)) {
+      if (!ACCOUNT_KEYS.has(key)) {
+        problems.push(`${where} has an unknown field "${key}".`);
+      }
+    }
+
+    const { name, legacyNames } = entry;
+    if (!isName(name)) {
+      problems.push(`${where}.name must be a non-empty string.`);
+      return;
+    }
+    const label = `${where} "${name}"`;
+
+    const normalized = normalizeCategoryName(name);
+    const previous = newNames.get(normalized);
+    if (previous !== undefined) {
+      problems.push(`${label} repeats the name of accounts[${previous}].`);
+    } else {
+      newNames.set(normalized, index);
+    }
+
+    if (!Array.isArray(legacyNames) || legacyNames.length === 0) {
+      problems.push(`${label}: "legacyNames" must be a non-empty array of names.`);
+      return;
+    }
+    const names: string[] = [];
+    legacyNames.forEach((legacyName: unknown, nameIndex) => {
+      if (!isName(legacyName)) {
+        problems.push(`${label}: legacyNames[${nameIndex}] must be a non-empty string.`);
+        return;
+      }
+      const key = normalizeCategoryName(legacyName);
+      const first = oldNames.get(key);
+      if (first === index) {
+        problems.push(`${label} lists the old account "${legacyName}" twice.`);
+        return;
+      }
+      if (first !== undefined) {
+        problems.push(`${label} lists the old account "${legacyName}" that accounts[${first}] lists.`);
+        return;
+      }
+      oldNames.set(key, index);
+      names.push(legacyName);
+    });
+    accounts.push({ name, legacyNames: names });
+  });
+
+  return accounts;
 }
 
 /** Reads and parses the layout file at `path`. */

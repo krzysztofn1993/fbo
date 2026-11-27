@@ -195,7 +195,7 @@ describe("categories", () => {
 });
 
 describe("legacy maps", () => {
-  it("rejects the same old account ID twice and a second old ID for one account", async () => {
+  it("rejects the same old account ID twice", async () => {
     const [first] = await db.insert(accounts).values(account()).returning();
     const [second] = await db.insert(accounts).values(account({ name: "bank 2" })).returning();
     await db.insert(legacyAccountMap).values({ legacyId: LEGACY_ID_1, accountId: first.id });
@@ -205,11 +205,20 @@ describe("legacy maps", () => {
         db.insert(legacyAccountMap).values({ legacyId: LEGACY_ID_1, accountId: second.id }),
       ),
     ).toEqual({ code: UNIQUE_VIOLATION, constraint: "legacy_account_map_pkey" });
-    expect(
-      await violation(
-        db.insert(legacyAccountMap).values({ legacyId: LEGACY_ID_2, accountId: first.id }),
-      ),
-    ).toEqual({ code: UNIQUE_VIOLATION, constraint: "legacy_account_map_account_id_key" });
+  });
+
+  it("lets several old accounts point at one merged account", async () => {
+    const [merged] = await db.insert(accounts).values(account()).returning();
+    await db.insert(legacyAccountMap).values([
+      { legacyId: LEGACY_ID_1, accountId: merged.id },
+      { legacyId: LEGACY_ID_2, accountId: merged.id },
+    ]);
+
+    const rows = await db
+      .select()
+      .from(legacyAccountMap)
+      .where(eq(legacyAccountMap.accountId, merged.id));
+    expect(rows).toHaveLength(2);
   });
 
   it("rejects the same old category ID twice", async () => {

@@ -1,0 +1,1 @@
+ALTER TABLE "legacy_account_map" DROP CONSTRAINT "legacy_account_map_account_id_key";

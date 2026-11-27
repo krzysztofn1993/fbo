@@ -32,6 +32,14 @@ function formatReport(report: MigrationReport): string {
     `Categories: ${report.rootCategories} root, ${report.subcategories} subcategories`,
     `Legacy map rows: ${report.accountMapRows} accounts, ${report.categoryMapRows} categories`,
     ...list(
+      "Renamed accounts",
+      report.renamedAccounts.map((rename) => `${rename.from} -> ${rename.to}`),
+    ),
+    ...list(
+      "Merged accounts",
+      report.mergedAccounts.map((merge) => `${merge.name} (${merge.oldAccountCount} old accounts)`),
+    ),
+    ...list(
       "Merged groups",
       report.mergedGroups.map(
         (group) =>

@@ -168,6 +168,72 @@ describe("parseCategoryLayout", () => {
     ).toEqual(['roots[1] "kategoria  A" repeats the name of roots[0].']);
   });
 
+  it("reads account entries when the file has them", () => {
+    const result = parseCategoryLayout(
+      JSON.stringify({
+        roots: [{ name: "Kategoria A" }],
+        accounts: [
+          { name: "Konto wspólne", legacyNames: ["bank 1", "bank 2"] },
+          { name: "Gotówka", legacyNames: ["cash 1"] },
+        ],
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      layout: {
+        roots: [{ name: "Kategoria A", labeled: false, children: [] }],
+        accounts: [
+          { name: "Konto wspólne", legacyNames: ["bank 1", "bank 2"] },
+          { name: "Gotówka", legacyNames: ["cash 1"] },
+        ],
+      },
+    });
+  });
+
+  it("rejects malformed account entries and unknown top-level fields", () => {
+    expect(problemsOf({ roots: [], accounts: {} })).toEqual(['"accounts" must be an array.']);
+    expect(problemsOf({ roots: [], acounts: [] })).toEqual([
+      'The category layout file has an unknown field "acounts".',
+    ]);
+    expect(
+      problemsOf({
+        roots: [],
+        accounts: [
+          "bank 1",
+          { name: "", legacyNames: ["bank 1"] },
+          { name: "Konto A", legacyNames: [] },
+          { name: "Konto B", legacyName: ["bank 2"] },
+          { name: "Konto C", legacyNames: ["bank 3", " "] },
+        ],
+      }),
+    ).toEqual([
+      "accounts[0] must be an object.",
+      "accounts[1].name must be a non-empty string.",
+      'accounts[2] "Konto A": "legacyNames" must be a non-empty array of names.',
+      'accounts[3] has an unknown field "legacyName".',
+      'accounts[3] "Konto B": "legacyNames" must be a non-empty array of names.',
+      'accounts[4] "Konto C": legacyNames[1] must be a non-empty string.',
+    ]);
+  });
+
+  it("rejects an old account listed twice and new account names that collide", () => {
+    expect(
+      problemsOf({
+        roots: [],
+        accounts: [
+          { name: "Konto A", legacyNames: ["bank 1", "Bank  1"] },
+          { name: "Konto B", legacyNames: ["bank 2"] },
+          { name: "Konto C", legacyNames: ["BANK 2"] },
+          { name: "konto  a", legacyNames: ["bank 3"] },
+        ],
+      }),
+    ).toEqual([
+      'accounts[0] "Konto A" lists the old account "Bank  1" twice.',
+      'accounts[2] "Konto C" lists the old account "BANK 2" that accounts[1] lists.',
+      'accounts[3] "konto  a" repeats the name of accounts[0].',
+    ]);
+  });
+
   it("allows renaming one root to the old name of another renamed root", () => {
     const result = parseCategoryLayout(
       JSON.stringify({

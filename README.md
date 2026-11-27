@@ -42,7 +42,7 @@ its commands need; variables marked "migration" are read only by
 | `SESSION_COOKIE_SECURE`       | no        | `true` (default) or `false`; see [HTTPS](#https) below                                 |
 | `DATABASE_URL`                | yes       | PostgreSQL connection URL; see [Database](#database) below                             |
 | `LEGACY_DATABASE_URL`         | migration | URL of the restored old database; see [Moving data](#moving-data-from-the-old-version) |
-| `LEGACY_CATEGORY_LAYOUT_FILE` | migration | Path to the category layout file, kept outside the repository                          |
+| `LEGACY_CATEGORY_LAYOUT_FILE` | migration | Path to the layout file (categories and accounts), kept outside the repository         |
 
 Generate the password hash and the secret:
 
@@ -132,8 +132,9 @@ into the new database, once. It copies the active accounts with their type,
 currency and reporting scope and skips the inactive ones. It copies every
 category with its kind, merges subcategories of one parent whose names differ
 only in case or spacing (the old IDs of all merged rows map to the one new
-category), and takes the order of the categories and the categories that take
-labels instead of subcategories from a layout file.
+category), and takes the order of the categories, the categories that take
+labels instead of subcategories, and any account renames and merges from a
+layout file.
 
 1. Restore the dump of the old database into a database of its own, for
    example `fbo_legacy` on the local server. The command only reads it.
@@ -146,8 +147,19 @@ labels instead of subcategories from a layout file.
    old name in `"legacyName"`: the entry then matches the old category of that
    name, the new category gets `"name"`, and the summary lists the rename. Two
    entries cannot match the same old category, and the new names must stay
-   unique. Subcategories are always matched by their own name. A made-up
-   example:
+   unique. Subcategories are always matched by their own name.
+
+   The same file can rename and merge accounts in an optional `"accounts"`
+   list. Each entry makes one new account named `"name"` from the old active
+   accounts named in `"legacyNames"`, matched regardless of case and spacing:
+   one old name renames an account, several merge accounts into one, and every
+   old account ID maps to it, so their later data lands on the one account.
+   Merged accounts must share type, currency and reporting scope, and the new
+   account keeps the creation time of the oldest. Accounts the list does not
+   name move over unchanged. An old name that matches no active account, an
+   old account in two entries and a new name that collides with another
+   account's name, regardless of case and spacing, are errors. The summary
+   lists the renamed and merged accounts. A made-up example:
 
    ```json
    {
@@ -155,6 +167,10 @@ labels instead of subcategories from a layout file.
        { "name": "Category A", "children": ["Subcategory 2", "Subcategory 1"] },
        { "name": "Category B", "type": "labeled" },
        { "name": "Earnings", "legacyName": "Income", "children": ["Salary", "Bonus"] }
+     ],
+     "accounts": [
+       { "name": "Shared account", "legacyNames": ["bank 1", "bank 2"] },
+       { "name": "Cash", "legacyNames": ["cash 1"] }
      ]
    }
    ```

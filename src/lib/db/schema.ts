@@ -88,12 +88,14 @@ export const categories = pgTable(
   ],
 );
 
-/** Old account ID → account created from it. */
+/**
+ * Old account ID → account created from it. Several old accounts may point at
+ * one account: the layout file merged them.
+ */
 export const legacyAccountMap = pgTable("legacy_account_map", {
   legacyId: uuid("legacy_id").primaryKey(),
   accountId: uuid("account_id")
     .notNull()
-    .unique("legacy_account_map_account_id_key")
     .references(() => accounts.id, { onDelete: "restrict" }),
   migratedAt: timestamp("migrated_at", { withTimezone: true }).notNull().defaultNow(),
 });

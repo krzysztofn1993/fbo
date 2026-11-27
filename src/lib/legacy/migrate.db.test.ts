@@ -14,6 +14,7 @@ import {
   ACCOUNT_CASH_1,
   ACCOUNT_INACTIVE,
   createLegacySchema,
+  insertLegacyAccounts,
   insertLegacyCategories,
   LEGACY_LAYOUT,
   ROOT_A,
@@ -247,5 +248,82 @@ describe("runLegacyMigration", () => {
       }
     }
     expect(await rowCounts()).toEqual(NO_ROWS);
+  });
+
+  describe("with accounts renamed and merged by the layout file", () => {
+    const ACCOUNT_BANK_2 = "a0000000-0000-4000-8000-000000000004";
+
+    beforeEach(async () => {
+      await insertLegacyAccounts(legacyPool, [
+        {
+          id: ACCOUNT_BANK_2,
+          name: "bank 2",
+          type: "bank",
+          currency: "PLN",
+          reportingScope: "personal",
+          isActive: true,
+          createdAt: new Date("2023-12-01T00:00:00Z"),
+          updatedAt: new Date("2023-12-02T00:00:00Z"),
+        },
+      ]);
+    });
+
+    it("maps every merged old account to one new account", async () => {
+      await writeFile(
+        layoutFile,
+        JSON.stringify({
+          ...LEGACY_LAYOUT,
+          accounts: [
+            { name: "Konto wspólne", legacyNames: ["bank 1", "Bank 2"] },
+            { name: "Gotówka", legacyNames: ["cash 1"] },
+          ],
+        }),
+      );
+
+      const outcome = await migrate();
+      expect(outcome.status).toBe("migrated");
+      if (outcome.status === "migrated") {
+        expect(outcome.report).toMatchObject({
+          accountsMigrated: 2,
+          accountMapRows: 3,
+          renamedAccounts: [{ from: "cash 1", to: "Gotówka" }],
+          mergedAccounts: [{ name: "Konto wspólne", oldAccountCount: 2 }],
+        });
+      }
+
+      const accountRows = await db.select().from(accounts);
+      const idOf = new Map(accountRows.map((row) => [row.name, row.id]));
+      expect([...idOf.keys()].sort()).toEqual(["Gotówka", "Konto wspólne"]);
+      const accountMap = await db.select().from(legacyAccountMap);
+      expect(
+        Object.fromEntries(accountMap.map((row) => [row.legacyId, row.accountId])),
+      ).toEqual({
+        [ACCOUNT_BANK_1]: idOf.get("Konto wspólne"),
+        [ACCOUNT_BANK_2]: idOf.get("Konto wspólne"),
+        [ACCOUNT_CASH_1]: idOf.get("Gotówka"),
+      });
+      // The merged account keeps the creation time of the older old account.
+      const merged = accountRows.find((row) => row.name === "Konto wspólne");
+      expect(merged?.createdAt.toISOString()).toBe("2023-12-01T00:00:00.000Z");
+    });
+
+    it("writes nothing when merged accounts differ in currency", async () => {
+      await writeFile(
+        layoutFile,
+        JSON.stringify({
+          ...LEGACY_LAYOUT,
+          accounts: [{ name: "Konto wspólne", legacyNames: ["bank 2", "cash 1"] }],
+        }),
+      );
+
+      const outcome = await migrate();
+      expect(outcome.status).toBe("invalid");
+      if (outcome.status === "invalid") {
+        expect(outcome.problems).toEqual([
+          expect.stringContaining("merges accounts that differ in type, currency or reporting scope"),
+        ]);
+      }
+      expect(await rowCounts()).toEqual(NO_ROWS);
+    });
   });
 });

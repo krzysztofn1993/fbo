@@ -104,6 +104,8 @@ export type MigrationReport = {
   categoryMapRows: number;
   mergedGroups: MergedGroup[];
   labeledCategories: string[];
+  /** Root categories renamed by a layout entry with `legacyName`. */
+  renamedCategories: { from: string; to: string }[];
   /** Subcategories without a layout entry, placed after the matched ones. */
   appendedSubcategories: { parentName: string; name: string }[];
   layoutWarnings: string[];
@@ -270,14 +272,17 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
   const layoutWarnings: string[] = [];
   const mergedGroups: MergedGroup[] = [];
   const labeledCategories: string[] = [];
+  const renamedCategories: { from: string; to: string }[] = [];
   const appendedSubcategories: { parentName: string; name: string }[] = [];
 
   const accounts = translateAccounts(input, problems);
   const rows = checkCategoryRows(input.categories, problems);
 
+  // Keyed by the normalized old name each entry matches: `legacyName` when the
+  // entry renames the category, otherwise its own name.
   const layoutRoots = new Map<string, { index: number; root: LayoutRoot }>();
   input.layout.roots.forEach((root, index) => {
-    layoutRoots.set(normalizeCategoryName(root.name), { index, root });
+    layoutRoots.set(normalizeCategoryName(root.legacyName ?? root.name), { index, root });
   });
 
   const rootGroups = groupByName(rows.roots, null, problems);
@@ -312,7 +317,8 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
   }
   for (const [name, { root }] of layoutRoots) {
     if (!rootGroups.has(name)) {
-      layoutWarnings.push(`Layout root "${root.name}" matches no root category.`);
+      const oldName = root.legacyName === undefined ? "" : ` (old name "${root.legacyName}")`;
+      layoutWarnings.push(`Layout root "${root.name}"${oldName} matches no root category.`);
     }
   }
   placedRoots.sort((a, b) => a.layoutIndex - b.layoutIndex);
@@ -324,6 +330,9 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
     const type = layoutRoot.labeled ? "labeled" : "standard";
     const root = toCategory(group, layoutRoot.name, position, type);
     rootCategories.push(root);
+    if (layoutRoot.legacyName !== undefined) {
+      renamedCategories.push({ from: group.rows[0].name, to: root.name });
+    }
     if (group.rows.length > 1) {
       mergedGroups.push({ name: root.name, parentName: null, rowCount: group.rows.length });
     }
@@ -404,6 +413,7 @@ export function translateAccountsAndCategories(input: TranslationInput): Transla
       categoryMapRows,
       mergedGroups,
       labeledCategories,
+      renamedCategories,
       appendedSubcategories,
       layoutWarnings,
     },

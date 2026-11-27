@@ -142,14 +142,19 @@ labels instead of subcategories from a layout file.
    display order; `"type": "labeled"` marks a root category that takes labels,
    and such a category cannot have `children`. Names are matched with the old
    categories regardless of case and spacing, and the spelling in the file
-   becomes the name of the new category. A made-up example:
+   becomes the name of the new category. To rename a root category, give its
+   old name in `"legacyName"`: the entry then matches the old category of that
+   name, the new category gets `"name"`, and the summary lists the rename. Two
+   entries cannot match the same old category, and the new names must stay
+   unique. Subcategories are always matched by their own name. A made-up
+   example:
 
    ```json
    {
      "roots": [
        { "name": "Category A", "children": ["Subcategory 2", "Subcategory 1"] },
        { "name": "Category B", "type": "labeled" },
-       { "name": "Income", "children": ["Salary", "Bonus"] }
+       { "name": "Earnings", "legacyName": "Income", "children": ["Salary", "Bonus"] }
      ]
    }
    ```

@@ -109,6 +109,76 @@ describe("parseCategoryLayout", () => {
       'roots[5] "Kategoria E": children[0] must be a non-empty string.',
     ]);
   });
+
+  it("keeps the old name of a root that the layout renames", () => {
+    const result = parseCategoryLayout(
+      JSON.stringify({
+        roots: [
+          { name: "Wpływy", legacyName: "Income", children: ["Premia"] },
+          { name: "Kategoria A" },
+        ],
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      layout: {
+        roots: [
+          { name: "Wpływy", legacyName: "Income", labeled: false, children: ["Premia"] },
+          { name: "Kategoria A", labeled: false, children: [] },
+        ],
+      },
+    });
+  });
+
+  it("rejects an empty or non-string legacyName", () => {
+    expect(
+      problemsOf({
+        roots: [
+          { name: "Kategoria A", legacyName: " " },
+          { name: "Kategoria B", legacyName: 1 },
+        ],
+      }),
+    ).toEqual([
+      'roots[0] "Kategoria A": "legacyName" must be a non-empty string when present.',
+      'roots[1] "Kategoria B": "legacyName" must be a non-empty string when present.',
+    ]);
+  });
+
+  it("rejects two roots that resolve to the same old name", () => {
+    expect(
+      problemsOf({
+        roots: [
+          { name: "Kategoria A", legacyName: "Old  Name" },
+          { name: "Kategoria B", legacyName: "old name" },
+        ],
+      }),
+    ).toEqual(['roots[1] "Kategoria B" matches the same old root category as roots[0].']);
+    expect(
+      problemsOf({
+        roots: [{ name: "Kategoria A" }, { name: "Kategoria B", legacyName: "kategoria a" }],
+      }),
+    ).toEqual(['roots[1] "Kategoria B" matches the same old root category as roots[0].']);
+  });
+
+  it("rejects a rename to a name another root already has", () => {
+    expect(
+      problemsOf({
+        roots: [{ name: "Kategoria A" }, { name: "kategoria  A", legacyName: "Income" }],
+      }),
+    ).toEqual(['roots[1] "kategoria  A" repeats the name of roots[0].']);
+  });
+
+  it("allows renaming one root to the old name of another renamed root", () => {
+    const result = parseCategoryLayout(
+      JSON.stringify({
+        roots: [
+          { name: "Kategoria B", legacyName: "Kategoria A" },
+          { name: "Kategoria C", legacyName: "Kategoria B" },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe("readCategoryLayoutFile", () => {

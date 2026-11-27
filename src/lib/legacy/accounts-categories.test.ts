@@ -405,6 +405,67 @@ describe("category type", () => {
   });
 });
 
+describe("renaming root categories", () => {
+  it("matches an old root by legacyName and gives it the layout name", () => {
+    const income = category("Income ", null, { kind: "income" });
+    const b = category("Kategoria B");
+    const { plan, report } = translated(
+      input({
+        categories: [income, b, category("Premia", income)],
+        layout: {
+          roots: [root("Kategoria B"), { ...root("Wpływy", ["Premia"]), legacyName: "income" }],
+        },
+      }),
+    );
+    expect(tree(plan)).toEqual([
+      ["Kategoria B", []],
+      ["Wpływy", ["Premia"]],
+    ]);
+    expect(plan.rootCategories[1]).toMatchObject({ key: income.id, legacyIds: [income.id] });
+    expect(report.renamedCategories).toEqual([{ from: "Income ", to: "Wpływy" }]);
+    expect(report.layoutWarnings).toEqual([]);
+  });
+
+  it("renames a merged root once and maps every old ID", () => {
+    const first = category("Income", null, { createdAt: day(1) });
+    const second = category("INCOME", null, { createdAt: day(2) });
+    const { plan, report } = translated(
+      input({
+        categories: [second, first],
+        layout: { roots: [{ ...root("Wpływy"), legacyName: "Income" }] },
+      }),
+    );
+    expect(plan.rootCategories.map((r) => [r.name, r.legacyIds])).toEqual([
+      ["Wpływy", [first.id, second.id]],
+    ]);
+    expect(report.renamedCategories).toEqual([{ from: "Income", to: "Wpływy" }]);
+    expect(report.mergedGroups).toEqual([{ name: "Wpływy", parentName: null, rowCount: 2 }]);
+  });
+
+  it("no longer matches an old root by the layout name when legacyName is set", () => {
+    const problems = problemsOf(
+      input({
+        categories: [category("Wpływy")],
+        layout: { roots: [{ ...root("Wpływy"), legacyName: "Income" }] },
+      }),
+    );
+    expect(problems).toEqual([expect.stringContaining("no entry in the category layout file")]);
+  });
+
+  it("warns with the old name when a renaming entry matches nothing", () => {
+    const { report } = translated(
+      input({
+        categories: [category("Kategoria A")],
+        layout: { roots: [root("Kategoria A"), { ...root("Wpływy"), legacyName: "Income" }] },
+      }),
+    );
+    expect(report.renamedCategories).toEqual([]);
+    expect(report.layoutWarnings).toEqual([
+      'Layout root "Wpływy" (old name "Income") matches no root category.',
+    ]);
+  });
+});
+
 describe("report", () => {
   it("sums up the whole translation", () => {
     const a = category("Kategoria A", null, { kind: "income" });
@@ -435,6 +496,7 @@ describe("report", () => {
       categoryMapRows: 6,
       mergedGroups: [{ name: "Premia", parentName: "Kategoria A", rowCount: 2 }],
       labeledCategories: ["Kategoria B"],
+      renamedCategories: [],
       appendedSubcategories: [{ parentName: "Kategoria A", name: "Podkategoria 2" }],
       layoutWarnings: [],
     });

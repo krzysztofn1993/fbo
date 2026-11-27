@@ -41,6 +41,10 @@ function formatReport(report: MigrationReport): string {
     ),
     ...list("Labeled categories", report.labeledCategories),
     ...list(
+      "Renamed",
+      report.renamedCategories.map((rename) => `${rename.from} -> ${rename.to}`),
+    ),
+    ...list(
       "Subcategories without a layout entry, placed last",
       report.appendedSubcategories.map((entry) => `${entry.parentName} / ${entry.name}`),
     ),

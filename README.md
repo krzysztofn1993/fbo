@@ -5,9 +5,9 @@ your own machine.
 
 The project is at an early stage: this repository holds the application
 scaffold, sign-in for the single administrator, a first domain rule, the
-database schema for accounts and categories, a one-time command that moves
-them from the old version, pages that list the accounts and the category
-tree, their tests, and a CI check.
+database schema for accounts, categories and transactions, a one-time command
+that moves them from the old version, pages that list the accounts and the
+category tree, their tests, and a CI check.
 
 ## Requirements
 
@@ -131,14 +131,14 @@ or `_e2e`, so it cannot empty the development database by mistake.
 
 ## Moving data from the old version
 
-`npm run legacy:migrate` moves the accounts and categories of the old version
-into the new database, once. It copies the active accounts with their type,
+`npm run legacy:migrate` moves the accounts, categories and transactions of the
+old version into the new database, once. It copies the active accounts with their type,
 currency and reporting scope and skips the inactive ones. It copies every
 category with its kind, merges categories of one parent, and root categories
 among themselves, whose names differ only in case or spacing (the old IDs of
 all merged rows map to the one new category), and takes the order of the categories, the categories that take
 labels instead of subcategories, and any account renames and merges from a
-layout file.
+layout file. Transactions are described [below](#transactions).
 
 1. Restore the dump of the old database into a database of its own, for
    example `fbo_legacy` on the local server. The command only reads it.
@@ -180,7 +180,7 @@ layout file.
    ```
 
 3. Set `DATABASE_URL` to a new database with the schema applied
-   (`npm run db:migrate`) and no accounts or categories yet,
+   (`npm run db:migrate`) and no data yet,
    `LEGACY_DATABASE_URL` to the restored old database and
    `LEGACY_CATEGORY_LAYOUT_FILE` to the layout file, for example in
    `.env.local`.
@@ -193,27 +193,71 @@ matching category only produce a warning. The command refuses to run when
 both URLs point at the same database, and it checks every rule before it
 writes: when the old data break one (an inactive account that other rows
 still refer to, a third category level, an unknown value), it lists every
-problem and writes nothing. The write is one transaction into empty tables,
-so a second run refuses and changes nothing. To try again, start from a fresh
-new database: recreate it, run `npm run db:migrate`, then
-`npm run legacy:migrate`.
+problem and writes nothing. The transactions are checked once the accounts and
+categories pass, so fixing those can bring up a second round of problems. The
+write is one transaction into tables that must all be empty, accounts,
+categories, transactions and the tables that hang off them alike, so a second
+run refuses and changes nothing. To try again, start from a fresh new database:
+recreate it, run `npm run db:migrate`, then `npm run legacy:migrate`; a
+database that already holds accounts and categories from an earlier version of
+the command has to be recreated too.
+
+### Transactions
+
+Every transaction moves to the new account its old account maps to, so the
+transactions of merged accounts land on the one account, with its booking and
+operation dates, amount in minor units, description and reporting scope
+override. Its currency is the currency of the account. Each old split becomes a
+part with its category (merged categories included), amount, reporting class
+and approval, and the classification state is derived from the parts as in the
+old version: no parts is unclassified, a part that is not approved needs
+review, and otherwise the transaction is approved.
+
+- A label stays only on a part in a category that takes labels; a label
+  anywhere else is dropped, and the part keeps its category and amount.
+- The source trace (source kind, merchant, import run, file name, hash, type
+  and size, sheet, cell, record index, raw value and record hashes, bank
+  connection, bank sync run and the provider metadata) and every old
+  classification result, with its category, rules, confidence, reason, status
+  and timestamps, are kept in tables of their own for later features; the path
+  of the old source file, import counters and the state of the bank
+  connections are not moved.
+- The transactions are inserted in their order in the source: by booking date,
+  the spreadsheet rows before the bank rows (manual ones last), the spreadsheet
+  rows by file, sheet and the importer's record order, the bank rows by
+  operation date, and the old ID last, so the new IDs keep that order.
+
+The run stops and writes nothing when a transaction has no account or is on an
+account that is not migrated, its currency differs from the account currency,
+a value is unknown (source kind, reporting class, classifier type, result
+status, reporting scope), a part or result is in a category that is not
+migrated, the parts do not sum exactly to the amount, a part in a category
+that takes labels has no label, a transaction has a note or is marked as a
+refund (the new version does not keep either yet), or a transaction without
+parts has a conflicting classification result (the old version showed it as
+needing review, the new rule would show it as unclassified).
+
+Besides the accounts and categories, the summary counts the transactions by
+source, the parts, the transactions in each classification state, the labels
+kept and dropped, and the old classification results by status. It prints
+counts only, no descriptions or amounts.
 
 ## Scripts
 
-| Command                      | What it does                                               |
-| ---------------------------- | ---------------------------------------------------------- |
-| `npm run dev`                | Start the development server                               |
-| `npm run build`              | Create a production build                                  |
-| `npm run start`              | Serve the production build                                 |
-| `npm run lint`               | Check the code with ESLint                                 |
-| `npm test`                   | Run the unit and database tests once                       |
-| `npm run test:watch`         | Rerun the unit and database tests on every change          |
-| `npm run test:e2e`           | Run the browser tests on the production build              |
-| `npm run verify`             | Run lint, build, unit, database and browser tests in order |
-| `npm run db:migrate`         | Apply pending migrations to `DATABASE_URL`                 |
-| `npm run db:generate`        | Write a migration for changes in the schema                |
-| `npm run legacy:migrate`     | Move accounts and categories from the old version, once    |
-| `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line                       |
+| Command                      | What it does                                                          |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `npm run dev`                | Start the development server                                          |
+| `npm run build`              | Create a production build                                             |
+| `npm run start`              | Serve the production build                                            |
+| `npm run lint`               | Check the code with ESLint                                            |
+| `npm test`                   | Run the unit and database tests once                                  |
+| `npm run test:watch`         | Rerun the unit and database tests on every change                     |
+| `npm run test:e2e`           | Run the browser tests on the production build                         |
+| `npm run verify`             | Run lint, build, unit, database and browser tests in order            |
+| `npm run db:migrate`         | Apply pending migrations to `DATABASE_URL`                            |
+| `npm run db:generate`        | Write a migration for changes in the schema                           |
+| `npm run legacy:migrate`     | Move accounts, categories and transactions from the old version, once |
+| `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line                                  |
 
 `npm run test:e2e` starts the production build on port 3100 with a test-only
 account and the `fbo_e2e` database filled with made-up accounts and

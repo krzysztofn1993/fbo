@@ -2,32 +2,62 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { accounts, categories, legacyAccountMap, legacyCategoryMap } from "@/lib/db/schema";
+import {
+  accounts,
+  categories,
+  legacyAccountMap,
+  legacyCategoryMap,
+  legacyClassificationResults,
+  legacyTransactionMap,
+  legacyTransactionSources,
+  transactionParts,
+  transactions,
+} from "@/lib/db/schema";
 import { testDatabaseUrl, testLegacyDatabaseUrl, truncateTables } from "@/lib/db/test-database";
 import { LegacyAccountIdSchema, LegacyCategoryIdSchema } from "@/lib/ids";
 import {
   ACCOUNT_BANK_1,
   ACCOUNT_CASH_1,
   ACCOUNT_INACTIVE,
+  BANK_SYNC_RUN_1,
   createLegacySchema,
   insertLegacyAccounts,
   insertLegacyCategories,
   LEGACY_LAYOUT,
+  LEGACY_TRANSACTIONS,
+  MERCHANT_1,
+  PROPOSAL_1,
+  RESULT_APPROVED,
+  RESULT_REJECTED,
+  RESULT_SUGGESTED,
   ROOT_A,
   ROOT_B,
   ROOT_C,
+  RULE_1,
+  RULE_2,
   seedLegacyDatabase,
+  SOURCE_FILE_1,
+  SOURCE_ORDER,
   SUB_A1,
   SUB_A2,
   SUB_A3,
   SUB_B_BONUS_NEW,
   SUB_B_BONUS_OLD,
   SUB_B_SALARY,
+  TX_BANK_APPROVED,
+  TX_BANK_APRIL,
+  TX_BANK_REVIEW,
+  TX_BANK_UNCLASSIFIED,
+  TX_SHEET_CASH,
+  TX_SHEET_INCOME,
+  TX_SHEET_LABELED,
+  TX_SHEET_SPLIT,
+  TX_SHEET_UNCLASSIFIED,
 } from "@/lib/legacy/legacy-fixture";
 import { type MigrationOptions, runLegacyMigration } from "@/lib/legacy/migrate";
 
@@ -73,11 +103,37 @@ async function rowCounts() {
     SELECT (SELECT count(*)::int FROM accounts) AS accounts,
            (SELECT count(*)::int FROM categories) AS categories,
            (SELECT count(*)::int FROM legacy_account_map) AS account_map,
-           (SELECT count(*)::int FROM legacy_category_map) AS category_map`);
+           (SELECT count(*)::int FROM legacy_category_map) AS category_map,
+           (SELECT count(*)::int FROM transactions) AS transactions,
+           (SELECT count(*)::int FROM transaction_parts) AS transaction_parts,
+           (SELECT count(*)::int FROM legacy_transaction_map) AS transaction_map,
+           (SELECT count(*)::int FROM legacy_transaction_sources) AS transaction_sources,
+           (SELECT count(*)::int FROM legacy_classification_results) AS classification_results,
+           (SELECT count(*)::int FROM possible_duplicates) AS possible_duplicates`);
   return result.rows[0];
 }
 
-const NO_ROWS = { accounts: 0, categories: 0, account_map: 0, category_map: 0 };
+const NO_ROWS = {
+  accounts: 0,
+  categories: 0,
+  account_map: 0,
+  category_map: 0,
+  transactions: 0,
+  transaction_parts: 0,
+  transaction_map: 0,
+  transaction_sources: 0,
+  classification_results: 0,
+  possible_duplicates: 0,
+};
+
+/** Sum of the amounts per booking month and currency, as text. */
+const OLD_TOTALS_SQL = `
+  SELECT to_char(booking_date, 'YYYY-MM') AS month, currency, sum(amount_minor)::text AS total
+  FROM transactions GROUP BY 1, 2 ORDER BY 1, 2`;
+const NEW_TOTALS_SQL = `
+  SELECT to_char(t.booking_date, 'YYYY-MM') AS month, a.currency,
+         sum(t.amount_minor)::text AS total
+  FROM transactions t JOIN accounts a ON a.id = t.account_id GROUP BY 1, 2 ORDER BY 1, 2`;
 
 describe("runLegacyMigration", () => {
   it("moves active accounts and all categories with legacy maps", async () => {
@@ -162,6 +218,300 @@ describe("runLegacyMigration", () => {
       expect(outcome.report.layoutWarnings).toHaveLength(1);
       expect(outcome.report.layoutWarnings[0]).toContain("Podkategoria 9");
     }
+  });
+
+  it("moves every transaction with its parts, source trace and classification results", async () => {
+    const outcome = await migrate();
+    expect(outcome.status).toBe("migrated");
+
+    expect(await rowCounts()).toEqual({
+      accounts: 2,
+      categories: 8,
+      account_map: 2,
+      category_map: 9,
+      transactions: LEGACY_TRANSACTIONS.length,
+      transaction_parts: 8,
+      transaction_map: LEGACY_TRANSACTIONS.length,
+      transaction_sources: LEGACY_TRANSACTIONS.length,
+      classification_results: 3,
+      possible_duplicates: 0,
+    });
+
+    const accountIdOf = new Map(
+      (await db.select().from(legacyAccountMap)).map((row) => [row.legacyId, row.accountId]),
+    );
+    const categoryIdOf = new Map(
+      (await db.select().from(legacyCategoryMap)).map((row) => [row.legacyId, row.categoryId]),
+    );
+    const transactionMap = await db.select().from(legacyTransactionMap);
+    const transactionIdOf = new Map(transactionMap.map((row) => [row.legacyId, row.transactionId]));
+    expect([...transactionIdOf.keys()].sort()).toEqual(
+      LEGACY_TRANSACTIONS.map((row) => row.id).sort(),
+    );
+    const newId = (legacyId: (typeof SOURCE_ORDER)[number]) => {
+      const id = transactionIdOf.get(legacyId);
+      if (id === undefined) {
+        throw new Error(`transaction ${legacyId} was not migrated`);
+      }
+      return id;
+    };
+
+    const transactionRows = await db.select().from(transactions);
+    for (const row of transactionRows) {
+      expect(row.id).toMatch(UUID_V7);
+    }
+    const transactionOf = new Map(transactionRows.map((row) => [row.id, row]));
+    expect(transactionOf.get(newId(TX_SHEET_CASH))).toMatchObject({
+      accountId: accountIdOf.get(ACCOUNT_CASH_1),
+      bookingDate: "2024-03-05",
+      operationDate: null,
+      amountMinor: -700n,
+      description: "opis 2",
+      reportingScopeOverride: "personal",
+      createdAt: new Date("2024-01-10T12:00:00Z"),
+    });
+    expect(transactionOf.get(newId(TX_BANK_APPROVED))).toMatchObject({
+      accountId: accountIdOf.get(ACCOUNT_BANK_1),
+      operationDate: "2024-03-04",
+      reportingScopeOverride: null,
+    });
+    expect(transactionOf.get(newId(TX_SHEET_UNCLASSIFIED))?.description).toBeNull();
+
+    // Inserted one by one in source order, so the UUIDv7 IDs keep it.
+    const ordered = await newPool.query<{ legacy_id: string }>(`
+      SELECT m.legacy_id::text AS legacy_id
+      FROM transactions t JOIN legacy_transaction_map m ON m.transaction_id = t.id
+      ORDER BY t.booking_date, t.id`);
+    expect(ordered.rows.map((row) => row.legacy_id)).toEqual(SOURCE_ORDER);
+
+    const partsOf = async (legacyId: (typeof SOURCE_ORDER)[number]) =>
+      (
+        await db
+          .select()
+          .from(transactionParts)
+          .where(eq(transactionParts.transactionId, newId(legacyId)))
+          .orderBy(asc(transactionParts.id))
+      ).map(({ categoryId, amountMinor, label, reportingClass, approved }) => ({
+        categoryId,
+        amountMinor,
+        label,
+        reportingClass,
+        approved,
+      }));
+    const part = { label: null, reportingClass: "standard", approved: true };
+    expect(await partsOf(TX_SHEET_LABELED)).toEqual([
+      { ...part, categoryId: categoryIdOf.get(ROOT_C), amountMinor: -1500n, label: "etykieta 1" },
+    ]);
+    // The income label is dropped; the part keeps the merged category and the amount.
+    expect(await partsOf(TX_SHEET_INCOME)).toEqual([
+      { ...part, categoryId: categoryIdOf.get(SUB_B_BONUS_NEW), amountMinor: 50000n },
+    ]);
+    expect(categoryIdOf.get(SUB_B_BONUS_NEW)).toBe(categoryIdOf.get(SUB_B_BONUS_OLD));
+    expect(await partsOf(TX_SHEET_CASH)).toEqual([
+      {
+        ...part,
+        categoryId: categoryIdOf.get(SUB_A1),
+        amountMinor: -700n,
+        reportingClass: "business_expense",
+      },
+    ]);
+    expect(await partsOf(TX_SHEET_SPLIT)).toEqual([
+      { ...part, categoryId: categoryIdOf.get(SUB_A1), amountMinor: -1000n },
+      {
+        ...part,
+        categoryId: categoryIdOf.get(SUB_A2),
+        amountMinor: -2000n,
+        reportingClass: "business_tax",
+      },
+    ]);
+    expect(await partsOf(TX_BANK_REVIEW)).toEqual([
+      { ...part, categoryId: categoryIdOf.get(SUB_A1), amountMinor: -900n, approved: false },
+    ]);
+    expect(await partsOf(TX_SHEET_UNCLASSIFIED)).toEqual([]);
+    expect(await partsOf(TX_BANK_UNCLASSIFIED)).toEqual([]);
+
+    const results = new Map(
+      (await db.select().from(legacyClassificationResults)).map((row) => [row.legacyId, row]),
+    );
+    expect(results.get(RESULT_APPROVED)).toMatchObject({
+      transactionId: newId(TX_BANK_APPROVED),
+      categoryId: categoryIdOf.get(SUB_A2),
+      legacyRuleId: RULE_1,
+      legacyRuleIds: [RULE_1, RULE_2],
+      classifierType: "merchant_rule",
+      confidenceBps: 10000,
+      provenance: { rule: "reguła 1" },
+      status: "approved",
+      createdAt: new Date("2024-01-20T12:00:00Z"),
+      updatedAt: new Date("2024-01-21T12:00:00Z"),
+    });
+    expect(results.get(RESULT_SUGGESTED)).toMatchObject({
+      transactionId: newId(TX_BANK_REVIEW),
+      categoryId: categoryIdOf.get(SUB_A1),
+      classifierType: "similar_history",
+      classifierVersion: "2",
+      legacyHistoricalProposalId: PROPOSAL_1,
+      reason: "podobna transakcja",
+      status: "suggested",
+    });
+    expect(results.get(RESULT_REJECTED)).toMatchObject({
+      transactionId: newId(TX_BANK_UNCLASSIFIED),
+      categoryId: null,
+      legacyRuleIds: [],
+      status: "rejected",
+    });
+
+    const sources = new Map(
+      (await db.select().from(legacyTransactionSources)).map((row) => [row.transactionId, row]),
+    );
+    expect(sources.get(newId(TX_SHEET_LABELED))).toMatchObject({
+      sourceKind: "legacy_excel",
+      legacySourceFileId: SOURCE_FILE_1,
+      sourceFileName: "plik 1.xlsx",
+      sourceFileSha256: "sha-1",
+      sourceFileMimeType: "application/vnd.ms-excel",
+      sourceFileSizeBytes: 2048n,
+      importerType: "importer 1",
+      importerVersion: "1.0",
+      sourceSheet: "Arkusz 1",
+      sourceCell: "B3",
+      sourceRecordIndex: 2,
+      rawSourceValue: "-1500",
+      legacyBankConnectionId: null,
+      providerSourceMetadata: null,
+    });
+    expect(sources.get(newId(TX_BANK_APPROVED))).toMatchObject({
+      sourceKind: "bank_api",
+      legacyMerchantId: MERCHANT_1,
+      legacyImportRunId: null,
+      sourceFileName: null,
+      bankProvider: "provider 1",
+      bankName: "bank 1",
+      bankCountry: "PL",
+      legacyBankSyncRunId: BANK_SYNC_RUN_1,
+      bankSyncStartedAt: new Date("2024-01-20T12:00:00Z"),
+      bankRecordIdHash: "bank-record-03",
+      providerSourceMetadata: { status: "BOOK" },
+    });
+
+    // Every month and currency adds up to the same total as in the old database.
+    const oldTotals = await legacyPool.query(OLD_TOTALS_SQL);
+    const newTotals = await newPool.query(NEW_TOTALS_SQL);
+    expect(oldTotals.rows.length).toBeGreaterThan(2);
+    expect(newTotals.rows).toEqual(oldTotals.rows);
+
+    if (outcome.status === "migrated") {
+      expect(outcome.report.transactions).toEqual({
+        transactions: LEGACY_TRANSACTIONS.length,
+        bySource: { legacy_excel: 5, bank_file: 0, bank_api: 4, manual: 0 },
+        parts: 8,
+        byState: { unclassified: 2, needs_review: 1, approved: 6 },
+        labelsKept: 1,
+        labelsDropped: 1,
+        classificationResults: 3,
+        resultsByStatus: { suggested: 1, approved: 1, rejected: 1, conflict: 0, superseded: 0 },
+      });
+    }
+  });
+
+  it.each<[string, string, unknown[], string]>([
+    [
+      "a transaction without an account",
+      "UPDATE transactions SET account_id = NULL WHERE id = $1",
+      [TX_SHEET_UNCLASSIFIED],
+      "has no account",
+    ],
+    [
+      "a transaction in another currency than its account",
+      "UPDATE transactions SET currency = 'EUR' WHERE id = $1",
+      [TX_BANK_APRIL],
+      "but its account is in PLN",
+    ],
+    [
+      "a transaction with a note",
+      "UPDATE transactions SET note = 'notatka' WHERE id = $1",
+      [TX_BANK_APRIL],
+      "has a note",
+    ],
+    [
+      "a transaction marked as a refund",
+      "UPDATE transactions SET refund_of_transaction_id = $2 WHERE id = $1",
+      [TX_BANK_APRIL, TX_BANK_APPROVED],
+      "refund",
+    ],
+    [
+      "parts that do not sum to the amount",
+      "UPDATE transaction_splits SET amount_minor = amount_minor - 1 WHERE transaction_id = $1",
+      [TX_BANK_APRIL],
+      "do not sum to its amount",
+    ],
+    [
+      "a part in the labeled category without a label",
+      "UPDATE transaction_splits SET label = NULL WHERE transaction_id = $1",
+      [TX_SHEET_LABELED],
+      "labeled category but has no label",
+    ],
+    [
+      "a conflicting result on a transaction without parts",
+      "UPDATE classification_results SET status = 'conflict' WHERE id = $1",
+      [RESULT_REJECTED],
+      "no parts but a conflicting classification result",
+    ],
+  ])("writes neither accounts nor transactions with %s", async (_, statement, values, message) => {
+    await legacyPool.query(statement, values);
+
+    const outcome = await migrate();
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.problems).toEqual([expect.stringContaining(message)]);
+    }
+    expect(await rowCounts()).toEqual(NO_ROWS);
+  });
+
+  it("writes nothing when an old enum has a value the new schema does not know", async () => {
+    // Added outside a transaction, and kept: the next file run recreates the type.
+    await legacyPool.query("ALTER TYPE transaction_source_kind ADD VALUE IF NOT EXISTS 'fax'");
+    await legacyPool.query("UPDATE transactions SET source_kind = 'fax' WHERE id = $1", [
+      TX_SHEET_SPLIT,
+    ]);
+
+    const outcome = await migrate();
+    expect(outcome).toEqual({
+      status: "invalid",
+      problems: [expect.stringContaining('unknown source kind "fax"')],
+    });
+    expect(await rowCounts()).toEqual(NO_ROWS);
+  });
+
+  it.each<[string, () => Promise<void>]>([
+    [
+      "an account with a transaction",
+      async () => {
+        const [account] = await db
+          .insert(accounts)
+          .values({ name: "bank 9", type: "bank", currency: "PLN", reportingScope: "personal" })
+          .returning({ id: accounts.id });
+        await db
+          .insert(transactions)
+          .values({ accountId: account.id, bookingDate: "2024-05-01", amountMinor: -100n });
+      },
+    ],
+    [
+      "a category",
+      async () => {
+        await db.insert(categories).values({ name: "Kategoria 9", kind: "expense", position: 0 });
+      },
+    ],
+  ])("refuses when only some of the tables are empty: %s", async (_, fill) => {
+    await fill();
+    const before = await rowCounts();
+
+    const outcome = await migrate();
+    expect(outcome.status).toBe("refused");
+    if (outcome.status === "refused") {
+      expect(outcome.message).toContain("already been migrated");
+    }
+    expect(await rowCounts()).toEqual(before);
   });
 
   it("refuses a second run and leaves the rows as they are", async () => {

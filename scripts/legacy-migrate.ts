@@ -1,6 +1,7 @@
 // Moves the active accounts, all categories and all transactions of the old
-// version into the empty tables of the new one, once, and prints a summary of
-// counts only (no descriptions or amounts).
+// version into the empty tables of the new one, once, marks the pairs of
+// possible duplicates among the transactions, and prints a summary of counts
+// only (no descriptions or amounts).
 //
 // Needs DATABASE_URL (the new database), LEGACY_DATABASE_URL (a separate
 // database restored from the old version's dump) and
@@ -34,6 +35,8 @@ function counts(byValue: Readonly<Record<string, number>>): string {
 }
 
 function formatTransactions(report: MigrationReport["transactions"]): string[] {
+  const pairs = report.possibleDuplicates;
+  const months = Object.keys(pairs.byMonth).length === 0 ? "none" : counts(pairs.byMonth);
   return [
     `Transactions: ${report.transactions} migrated (by source: ${counts(report.bySource)})`,
     `Transaction parts: ${report.parts}`,
@@ -42,6 +45,11 @@ function formatTransactions(report: MigrationReport["transactions"]): string[] {
       `${report.labelsDropped} dropped outside them`,
     `Old classification results: ${report.classificationResults} ` +
       `(by status: ${counts(report.resultsByStatus)})`,
+    `Possible duplicate pairs (bank row ~ spreadsheet row): ${pairs.pairs} ` +
+      `(0 days without a competitor ${pairs.sameDayWithoutCompetitor}, ` +
+      `1-3 days without a competitor ${pairs.nearDateWithoutCompetitor}, ` +
+      `with a competitor ${pairs.withCompetitor})`,
+    `Possible duplicate pairs by month of the bank booking date: ${months}`,
   ];
 }
 

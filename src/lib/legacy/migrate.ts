@@ -1,8 +1,9 @@
 // One run of the migration from the old version: read the layout file and the
 // old database, translate the accounts and categories, then the transactions
-// that refer to them, in memory, and write everything to the new database in
-// one transaction. Any problem stops the run before the write, and a failed
-// write is rolled back, so nothing is left half-written.
+// that refer to them and the pairs of possible duplicates among those, in
+// memory, and write everything to the new database in one transaction. Any
+// problem stops the run before the write, and a failed write is rolled back,
+// so nothing is left half-written.
 //
 // Loaded by the `legacy:migrate` script under plain `node`, so it imports only
 // packages and relative `.ts` paths and uses only erasable syntax.
@@ -146,6 +147,7 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
     await writeMigrationPlan(drizzle({ client: pool }), {
       ...translation.plan,
       transactions: transactions.transactions,
+      duplicates: transactions.duplicates,
     });
   } catch (error) {
     if (error instanceof AlreadyMigratedError) {

@@ -19,15 +19,26 @@ import {
   transactions,
 } from "@/lib/db/schema";
 import { testDatabaseUrl, testLegacyDatabaseUrl, truncateTables } from "@/lib/db/test-database";
-import { LegacyAccountIdSchema, LegacyCategoryIdSchema } from "@/lib/ids";
+import { LegacyCategoryIdSchema } from "@/lib/ids";
 import {
   ACCOUNT_BANK_1,
+  ACCOUNT_BANK_2,
   ACCOUNT_CASH_1,
   ACCOUNT_INACTIVE,
   BANK_SYNC_RUN_1,
   createLegacySchema,
+  DUP_BANK_CONTESTED,
+  DUP_BANK_OPERATION_DATE,
+  DUP_BANK_SAME_DAY,
+  DUP_BANK_THREE_DAYS,
+  DUP_SHEET_CLOSER,
+  DUP_SHEET_OPERATION_DATE,
+  DUP_SHEET_SAME_DAY,
+  DUP_SHEET_THREE_DAYS,
+  DUPLICATES_LAYOUT,
   insertLegacyAccounts,
   insertLegacyCategories,
+  LEGACY_ACCOUNT_BANK_2,
   LEGACY_LAYOUT,
   LEGACY_TRANSACTIONS,
   MERCHANT_1,
@@ -40,7 +51,12 @@ import {
   ROOT_C,
   RULE_1,
   RULE_2,
+  SECOND_KEY_BANK_BOTH,
+  SECOND_KEY_BANK_ONE,
+  SECOND_KEY_SHEET_EARLY,
+  SECOND_KEY_SHEET_LATE,
   seedLegacyDatabase,
+  seedLegacyDuplicates,
   SOURCE_FILE_1,
   SOURCE_ORDER,
   SUB_A1,
@@ -125,6 +141,30 @@ const NO_ROWS = {
   classification_results: 0,
   possible_duplicates: 0,
 };
+
+/** The marked pairs by old IDs, the first and the second transaction, with the source kinds. */
+async function duplicatePairs() {
+  const result = await newPool.query<{
+    first: string;
+    second: string;
+    day_difference: number;
+    first_source: string;
+    second_source: string;
+    same_account: boolean;
+  }>(`
+    SELECT fm.legacy_id::text AS first, sm.legacy_id::text AS second, d.day_difference,
+           fs.source_kind::text AS first_source, ss.source_kind::text AS second_source,
+           ft.account_id = st.account_id AS same_account
+    FROM possible_duplicates d
+    JOIN legacy_transaction_map fm ON fm.transaction_id = d.first_transaction_id
+    JOIN legacy_transaction_map sm ON sm.transaction_id = d.second_transaction_id
+    JOIN legacy_transaction_sources fs ON fs.transaction_id = d.first_transaction_id
+    JOIN legacy_transaction_sources ss ON ss.transaction_id = d.second_transaction_id
+    JOIN transactions ft ON ft.id = d.first_transaction_id
+    JOIN transactions st ON st.id = d.second_transaction_id
+    ORDER BY 1, 2`);
+  return result.rows;
+}
 
 /** Sum of the amounts per booking month and currency, as text. */
 const OLD_TOTALS_SQL = `
@@ -234,7 +274,7 @@ describe("runLegacyMigration", () => {
       transaction_map: LEGACY_TRANSACTIONS.length,
       transaction_sources: LEGACY_TRANSACTIONS.length,
       classification_results: 3,
-      possible_duplicates: 0,
+      possible_duplicates: 1,
     });
 
     const accountIdOf = new Map(
@@ -410,8 +450,26 @@ describe("runLegacyMigration", () => {
         labelsDropped: 1,
         classificationResults: 3,
         resultsByStatus: { suggested: 1, approved: 1, rejected: 1, conflict: 0, superseded: 0 },
+        possibleDuplicates: {
+          pairs: 1,
+          sameDayWithoutCompetitor: 1,
+          nearDateWithoutCompetitor: 0,
+          withCompetitor: 0,
+          byMonth: { "2024-03": 1 },
+        },
       });
     }
+    // The labeled spreadsheet row and the approved bank row share account, day and amount.
+    expect(await duplicatePairs()).toEqual([
+      {
+        first: TX_BANK_APPROVED,
+        second: TX_SHEET_LABELED,
+        day_difference: 0,
+        first_source: "bank_api",
+        second_source: "legacy_excel",
+        same_account: true,
+      },
+    ]);
   });
 
   it.each<[string, string, unknown[], string]>([
@@ -621,21 +679,8 @@ describe("runLegacyMigration", () => {
   });
 
   describe("with accounts renamed and merged by the layout file", () => {
-    const ACCOUNT_BANK_2 = LegacyAccountIdSchema.parse("a0000000-0000-4000-8000-000000000004");
-
     beforeEach(async () => {
-      await insertLegacyAccounts(legacyPool, [
-        {
-          id: ACCOUNT_BANK_2,
-          name: "bank 2",
-          type: "bank",
-          currency: "PLN",
-          reportingScope: "personal",
-          isActive: true,
-          createdAt: new Date("2023-12-01T00:00:00Z"),
-          updatedAt: new Date("2023-12-02T00:00:00Z"),
-        },
-      ]);
+      await insertLegacyAccounts(legacyPool, [LEGACY_ACCOUNT_BANK_2]);
     });
 
     it("maps every merged old account to one new account", async () => {
@@ -694,6 +739,63 @@ describe("runLegacyMigration", () => {
         ]);
       }
       expect(await rowCounts()).toEqual(NO_ROWS);
+    });
+  });
+
+  describe("with possible duplicates on merged accounts", () => {
+    beforeEach(async () => {
+      await seedLegacyDuplicates(legacyPool);
+      await writeFile(layoutFile, JSON.stringify(DUPLICATES_LAYOUT));
+    });
+
+    it("stores one-to-one pairs, the bank row first, counted in disjoint buckets", async () => {
+      const outcome = await migrate();
+      expect(outcome.status).toBe("migrated");
+
+      const pair = (
+        first: string,
+        second: string,
+        dayDifference: number,
+        firstSource = "bank_api",
+      ) => ({
+        first,
+        second,
+        day_difference: dayDifference,
+        first_source: firstSource,
+        second_source: "legacy_excel",
+        same_account: true,
+      });
+      const expected = [
+        pair(TX_BANK_APPROVED, TX_SHEET_LABELED, 0),
+        pair(DUP_BANK_SAME_DAY, DUP_SHEET_SAME_DAY, 0),
+        pair(DUP_BANK_OPERATION_DATE, DUP_SHEET_OPERATION_DATE, 1),
+        pair(DUP_BANK_THREE_DAYS, DUP_SHEET_THREE_DAYS, 3, "bank_file"),
+        pair(DUP_BANK_CONTESTED, DUP_SHEET_CLOSER, 0),
+        pair(SECOND_KEY_BANK_BOTH, SECOND_KEY_SHEET_LATE, 2),
+        pair(SECOND_KEY_BANK_ONE, SECOND_KEY_SHEET_EARLY, 2),
+      ].sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
+      expect(await duplicatePairs()).toEqual(expected);
+
+      // The pairs join rows of both merged old accounts.
+      const accountMap = await db.select().from(legacyAccountMap);
+      const accountIdOf = new Map(accountMap.map((row) => [row.legacyId, row.accountId]));
+      expect(accountIdOf.get(ACCOUNT_BANK_2)).toBe(accountIdOf.get(ACCOUNT_BANK_1));
+
+      if (outcome.status === "migrated") {
+        const report = outcome.report.transactions.possibleDuplicates;
+        expect(report).toEqual({
+          pairs: expected.length,
+          sameDayWithoutCompetitor: 2,
+          nearDateWithoutCompetitor: 2,
+          withCompetitor: 3,
+          byMonth: { "2024-03": 1, "2024-05": 3, "2024-06": 3 },
+        });
+        expect(
+          report.sameDayWithoutCompetitor +
+            report.nearDateWithoutCompetitor +
+            report.withCompetitor,
+        ).toBe(report.pairs);
+      }
     });
   });
 });

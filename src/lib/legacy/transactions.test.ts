@@ -7,6 +7,7 @@ import {
   LegacyTransactionIdSchema,
 } from "@/lib/ids";
 import type { MigrationPlan, NewCategory } from "@/lib/legacy/accounts-categories";
+import type { NewDuplicatePair } from "@/lib/legacy/duplicates";
 import {
   type LegacyClassificationResultRow,
   type LegacyTransactionPartRow,
@@ -193,6 +194,7 @@ function input(
 
 function translated(value: TransactionTranslationInput): {
   transactions: NewTransaction[];
+  duplicates: NewDuplicatePair[];
   report: TransactionReport;
 } {
   const outcome = translateTransactions(value);
@@ -326,6 +328,40 @@ describe("translateTransactions", () => {
       labelsDropped: 0,
       classificationResults: 3,
       resultsByStatus: { suggested: 1, approved: 1, rejected: 1, conflict: 0, superseded: 0 },
+      // The bank row without parts has two spreadsheet rows of its amount and day.
+      possibleDuplicates: {
+        pairs: 1,
+        sameDayWithoutCompetitor: 0,
+        nearDateWithoutCompetitor: 0,
+        withCompetitor: 1,
+        byMonth: { "2024-03": 1 },
+      },
+    });
+  });
+
+  it("marks possible duplicates across merged old accounts, the bank row first", () => {
+    const sheet = transaction({ accountId: BANK_MERGED, bookingDate: "2024-03-06" });
+    const bank = bankTransaction({ bookingDate: "2024-03-08", operationDate: "2024-03-07" });
+    const otherAccount = bankTransaction({ accountId: CASH, currency: "EUR" });
+    const { duplicates, report } = translated(
+      input({ transactions: [otherAccount, bank, sheet] }),
+    );
+
+    expect(duplicates).toEqual([
+      {
+        bankLegacyId: bank.id,
+        sheetLegacyId: sheet.id,
+        bankBookingDate: "2024-03-08",
+        dayDifference: 1,
+        hasCompetitor: false,
+      },
+    ]);
+    expect(report.possibleDuplicates).toEqual({
+      pairs: 1,
+      sameDayWithoutCompetitor: 0,
+      nearDateWithoutCompetitor: 1,
+      withCompetitor: 0,
+      byMonth: { "2024-03": 1 },
     });
   });
 

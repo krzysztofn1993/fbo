@@ -333,7 +333,11 @@ export const possibleDuplicates = pgTable(
       .$type<TransactionId>()
       .notNull()
       .references(() => transactions.id, { onDelete: "cascade" }),
-    /** Days between the booking dates of the two transactions. */
+    /**
+     * Days between the two transactions: for a migrated pair, the smaller of
+     * the gaps from the sheet row's booking date to the bank row's booking
+     * date and to its operation date.
+     */
     dayDifference: integer("day_difference").notNull(),
     createdAt: createdAt(),
   },

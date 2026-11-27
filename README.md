@@ -226,6 +226,20 @@ review, and otherwise the transaction is approved.
   the spreadsheet rows before the bank rows (manual ones last), the spreadsheet
   rows by file, sheet and the importer's record order, the bank rows by
   operation date, and the old ID last, so the new IDs keep that order.
+- Pairs of possible duplicates are marked, not removed: the old version kept
+  both the spreadsheet and the bank rows for the months they overlap, so one
+  money movement can appear twice. A bank row (from the bank connection or a
+  bank file) and a spreadsheet row are candidates when they are on the same new
+  account (merged accounts included), have the same amount, and the booking
+  date of the spreadsheet row is at most three calendar days from the booking
+  or the operation date of the bank row; the smaller of the two gaps is the
+  pair's day difference. Every row is in at most one pair: the candidates are
+  taken in order of the day difference, then of how many candidates their two
+  rows have together (so a row with a single candidate is not lost to one with
+  several), then of the booking date and the source position of the bank row,
+  and of the source position of the spreadsheet row, skipping any whose row is
+  already paired. Both transactions of a pair still count in every total until
+  someone resolves the pair.
 
 The run stops and writes nothing when a transaction has no account or is on an
 account that is not migrated, its currency differs from the account currency,
@@ -239,8 +253,11 @@ needing review, the new rule would show it as unclassified).
 
 Besides the accounts and categories, the summary counts the transactions by
 source, the parts, the transactions in each classification state, the labels
-kept and dropped, and the old classification results by status. It prints
-counts only, no descriptions or amounts.
+kept and dropped, the old classification results by status, and the pairs of
+possible duplicates: all of them, split into three disjoint groups (0 days
+apart with no competing candidate, 1 to 3 days apart with no competing
+candidate, and those where either row had another candidate), and by month of
+the bank row's booking date. It prints counts only, no descriptions or amounts.
 
 ## Scripts
 

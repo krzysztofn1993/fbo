@@ -2,7 +2,7 @@
 // with only the columns the migration reads, made-up rows and a made-up
 // category layout. Nothing here comes from a real instance.
 //
-// Imported by database tests only; relative `.ts` imports like the modules the
+// Imported by tests only; relative `.ts` imports like the modules the
 // migration script loads.
 
 import {
@@ -775,4 +775,160 @@ export async function seedLegacyDatabase(client: Queryable): Promise<void> {
   await insertLegacyTransactions(client, LEGACY_TRANSACTIONS);
   await insertLegacyParts(client, LEGACY_PARTS);
   await insertLegacyClassificationResults(client, LEGACY_CLASSIFICATION_RESULTS);
+}
+
+// Possible duplicate pairs: a separate set, added on top of the rows above,
+// with a second bank account that the layout merges with "bank 1". One case
+// per rule of the pairing, in May to July 2024; each case has an amount of its
+// own, so no case can pair with another one or with the rows above.
+
+export const ACCOUNT_BANK_2 = LegacyAccountIdSchema.parse("a0000000-0000-4000-8000-000000000004");
+
+/** Older than "bank 1", so it leads the merged account. */
+export const LEGACY_ACCOUNT_BANK_2: LegacyAccountRow = {
+  id: ACCOUNT_BANK_2,
+  name: "bank 2",
+  type: "bank",
+  currency: "PLN",
+  reportingScope: "personal",
+  isActive: true,
+  createdAt: new Date("2023-12-01T00:00:00Z"),
+  updatedAt: new Date("2023-12-02T00:00:00Z"),
+};
+
+/** The category layout with "bank 1" and "bank 2" merged into one new account. */
+export const DUPLICATES_LAYOUT = {
+  ...LEGACY_LAYOUT,
+  accounts: [{ name: "Konto wspólne", legacyNames: ["bank 1", "bank 2"] }],
+};
+
+/** Same booking date, on the two merged old accounts: a pair, 0 days. */
+export const DUP_SHEET_SAME_DAY = transactionId(201);
+export const DUP_BANK_SAME_DAY = transactionId(202);
+/** Booking dates five days apart, the operation date one day: a pair, 1 day. */
+export const DUP_SHEET_OPERATION_DATE = transactionId(203);
+export const DUP_BANK_OPERATION_DATE = transactionId(204);
+/** From a bank file without an operation date, exactly three days: a pair, 3 days. */
+export const DUP_SHEET_THREE_DAYS = transactionId(205);
+export const DUP_BANK_THREE_DAYS = transactionId(206);
+/** Four days from both dates of the bank row: no pair. */
+export const DUP_SHEET_FOUR_DAYS = transactionId(207);
+export const DUP_BANK_FOUR_DAYS = transactionId(208);
+/** One bank row, two spreadsheet rows of the same amount: the closer one pairs. */
+export const DUP_BANK_CONTESTED = transactionId(209);
+export const DUP_SHEET_CLOSER = transactionId(210);
+export const DUP_SHEET_FARTHER = transactionId(211);
+/**
+ * All four candidates are two days apart. The bank row with two candidates
+ * would take the earlier spreadsheet row by booking date and position, but the
+ * sum of candidate counts puts its pair with the later one first, so the
+ * earlier spreadsheet row stays free for the bank row whose only candidate it
+ * is (through the operation date): two pairs instead of one.
+ */
+export const SECOND_KEY_SHEET_EARLY = transactionId(212);
+export const SECOND_KEY_SHEET_LATE = transactionId(213);
+export const SECOND_KEY_BANK_BOTH = transactionId(214);
+export const SECOND_KEY_BANK_ONE = transactionId(215);
+/** Two bank rows and two spreadsheet rows on one day, each pair within one source: no pair. */
+export const DUP_BANK_SAME_SOURCE_1 = transactionId(216);
+export const DUP_BANK_SAME_SOURCE_2 = transactionId(217);
+export const DUP_SHEET_SAME_SOURCE_1 = transactionId(218);
+export const DUP_SHEET_SAME_SOURCE_2 = transactionId(219);
+/** Same day and amount, but the spreadsheet row is on another new account: no pair. */
+export const DUP_SHEET_OTHER_ACCOUNT = transactionId(220);
+export const DUP_BANK_OTHER_ACCOUNT = transactionId(221);
+
+const duplicateSheetRow = (
+  id: LegacyTransactionId,
+  sourceRecordIndex: number,
+  bookingDate: string,
+  amountMinor: bigint,
+  values: Partial<Pick<LegacyTransactionSeed, "accountId" | "currency">> = {},
+): LegacyTransactionSeed =>
+  sheetRow(id, {
+    bookingDate,
+    amountMinor,
+    description: `opis ${id.slice(-3)}`,
+    sourceSheet: "Arkusz 3",
+    sourceRecordIndex,
+    ...values,
+  });
+
+export const LEGACY_DUPLICATE_TRANSACTIONS: LegacyTransactionSeed[] = [
+  duplicateSheetRow(DUP_SHEET_SAME_DAY, 1, "2024-05-06", -4100n, { accountId: ACCOUNT_BANK_2 }),
+  bankRow(DUP_BANK_SAME_DAY, {
+    bookingDate: "2024-05-06",
+    operationDate: "2024-05-03",
+    amountMinor: -4100n,
+  }),
+  duplicateSheetRow(DUP_SHEET_OPERATION_DATE, 2, "2024-05-08", -4200n),
+  bankRow(DUP_BANK_OPERATION_DATE, {
+    bookingDate: "2024-05-13",
+    operationDate: "2024-05-09",
+    amountMinor: -4200n,
+  }),
+  duplicateSheetRow(DUP_SHEET_THREE_DAYS, 3, "2024-05-20", -4300n, { accountId: ACCOUNT_BANK_2 }),
+  bankRow(DUP_BANK_THREE_DAYS, {
+    sourceKind: "bank_file",
+    bookingDate: "2024-05-23",
+    operationDate: null,
+    amountMinor: -4300n,
+  }),
+  duplicateSheetRow(DUP_SHEET_FOUR_DAYS, 4, "2024-05-27", -4400n),
+  bankRow(DUP_BANK_FOUR_DAYS, {
+    bookingDate: "2024-05-31",
+    operationDate: "2024-05-23",
+    amountMinor: -4400n,
+  }),
+  bankRow(DUP_BANK_CONTESTED, {
+    bookingDate: "2024-06-04",
+    operationDate: "2024-06-04",
+    amountMinor: -4500n,
+  }),
+  duplicateSheetRow(DUP_SHEET_CLOSER, 5, "2024-06-04", -4500n),
+  duplicateSheetRow(DUP_SHEET_FARTHER, 6, "2024-06-05", -4500n, { accountId: ACCOUNT_BANK_2 }),
+  duplicateSheetRow(SECOND_KEY_SHEET_EARLY, 7, "2024-06-10", -4600n),
+  duplicateSheetRow(SECOND_KEY_SHEET_LATE, 8, "2024-06-14", -4600n),
+  bankRow(SECOND_KEY_BANK_BOTH, {
+    bookingDate: "2024-06-12",
+    operationDate: "2024-06-12",
+    amountMinor: -4600n,
+  }),
+  bankRow(SECOND_KEY_BANK_ONE, {
+    bookingDate: "2024-06-20",
+    operationDate: "2024-06-08",
+    amountMinor: -4600n,
+  }),
+  bankRow(DUP_BANK_SAME_SOURCE_1, {
+    bookingDate: "2024-07-01",
+    operationDate: "2024-07-01",
+    amountMinor: -4700n,
+  }),
+  bankRow(DUP_BANK_SAME_SOURCE_2, {
+    bookingDate: "2024-07-01",
+    operationDate: "2024-07-01",
+    amountMinor: -4700n,
+  }),
+  duplicateSheetRow(DUP_SHEET_SAME_SOURCE_1, 9, "2024-07-01", -4800n),
+  duplicateSheetRow(DUP_SHEET_SAME_SOURCE_2, 10, "2024-07-01", -4800n, {
+    accountId: ACCOUNT_BANK_2,
+  }),
+  duplicateSheetRow(DUP_SHEET_OTHER_ACCOUNT, 11, "2024-07-08", -4900n, {
+    accountId: ACCOUNT_CASH_1,
+    currency: "EUR",
+  }),
+  bankRow(DUP_BANK_OTHER_ACCOUNT, {
+    bookingDate: "2024-07-08",
+    operationDate: "2024-07-08",
+    amountMinor: -4900n,
+  }),
+];
+
+/**
+ * Adds the second bank account and the duplicate cases to a database filled
+ * by `seedLegacyDatabase`; run the migration with `DUPLICATES_LAYOUT`.
+ */
+export async function seedLegacyDuplicates(client: Queryable): Promise<void> {
+  await insertLegacyAccounts(client, [LEGACY_ACCOUNT_BANK_2]);
+  await insertLegacyTransactions(client, LEGACY_DUPLICATE_TRANSACTIONS);
 }

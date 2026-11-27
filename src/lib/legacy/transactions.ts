@@ -6,7 +6,8 @@
 // instead of stopping at the first.
 //
 // The rows arrive with their shape already checked (see `read.ts`); the enum
-// values are checked here against the new schema.
+// values are checked here against the new schema. The pairs of possible
+// duplicates among the translated transactions come from `duplicates.ts`.
 //
 // Loaded by the `legacy:migrate` script under plain `node`, so it imports only
 // packages and relative `.ts` paths and uses only erasable syntax.
@@ -40,6 +41,12 @@ import {
   classificationState,
 } from "../transactions/classification-state.ts";
 import type { CategoryType, MigrationPlan, ReportingScope } from "./accounts-categories.ts";
+import {
+  type DuplicateReport,
+  findPossibleDuplicates,
+  type NewDuplicatePair,
+  summarizeDuplicates,
+} from "./duplicates.ts";
 
 const LegacySourceKindSchema = z.enum(legacySourceKind.enumValues);
 const ReportingClassSchema = z.enum(reportingClass.enumValues);
@@ -227,10 +234,17 @@ export type TransactionReport = {
   labelsDropped: number;
   classificationResults: number;
   resultsByStatus: Record<LegacyClassificationStatus, number>;
+  possibleDuplicates: DuplicateReport;
 };
 
 export type TransactionTranslationResult =
-  | { ok: true; transactions: NewTransaction[]; report: TransactionReport }
+  | {
+      ok: true;
+      transactions: NewTransaction[];
+      /** Pairs of a bank row and a spreadsheet row that may be one money movement. */
+      duplicates: NewDuplicatePair[];
+      report: TransactionReport;
+    }
   | { ok: false; problems: string[] };
 
 function compareText(a: string, b: string): number {
@@ -574,6 +588,7 @@ export function translateTransactions(
   }
 
   migrated.sort(compareSourcePosition);
+  const duplicates = findPossibleDuplicates(migrated);
 
   const report: TransactionReport = {
     transactions: migrated.length,
@@ -584,6 +599,7 @@ export function translateTransactions(
     labelsDropped,
     classificationResults: 0,
     resultsByStatus: zeroCounts(legacyClassificationStatus.enumValues),
+    possibleDuplicates: summarizeDuplicates(duplicates),
   };
   for (const transaction of migrated) {
     report.bySource[transaction.source.sourceKind] += 1;
@@ -595,5 +611,5 @@ export function translateTransactions(
     }
   }
 
-  return { ok: true, transactions: migrated, report };
+  return { ok: true, transactions: migrated, duplicates, report };
 }

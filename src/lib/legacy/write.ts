@@ -6,8 +6,8 @@
 // come from the database, so roots are inserted before their subcategories,
 // the legacy maps after the records they point at, and the transactions one by
 // one in the order of the plan, so their UUIDv7 IDs follow it. The rows that
-// hang off the transactions go in batches, since PostgreSQL takes at most
-// 65 535 parameters per statement.
+// hang off the transactions, the pairs of possible duplicates last, go in
+// batches, since PostgreSQL takes at most 65 535 parameters per statement.
 //
 // Loaded by the `legacy:migrate` script under plain `node`, so it imports only
 // packages and relative `.ts` paths and uses only erasable syntax.
@@ -36,10 +36,17 @@ import type {
   TransactionId,
 } from "../ids.ts";
 import type { MigrationPlan, NewCategory } from "./accounts-categories.ts";
+import type { NewDuplicatePair } from "./duplicates.ts";
 import type { NewTransaction } from "./transactions.ts";
 
-/** The accounts and categories of the old version with the transactions on them. */
-export type MigrationWritePlan = MigrationPlan & { transactions: readonly NewTransaction[] };
+/**
+ * The accounts and categories of the old version with the transactions on
+ * them and the pairs of possible duplicates among those transactions.
+ */
+export type MigrationWritePlan = MigrationPlan & {
+  transactions: readonly NewTransaction[];
+  duplicates: readonly NewDuplicatePair[];
+};
 
 /** Rows per multi-row insert; the widest table has about 25 columns. */
 const BATCH_SIZE = 500;
@@ -239,6 +246,19 @@ export async function writeMigrationPlan(
     );
     for (const batch of batches(results)) {
       await tx.insert(legacyClassificationResults).values(batch);
+    }
+
+    // The row from the bank first, the row from the spreadsheet second.
+    const transactionIds = new Map(
+      transactionMap.map((row) => [row.legacyId, row.transactionId] as const),
+    );
+    const pairs = plan.duplicates.map((pair) => ({
+      firstTransactionId: lookup(transactionIds, pair.bankLegacyId, "transaction"),
+      secondTransactionId: lookup(transactionIds, pair.sheetLegacyId, "transaction"),
+      dayDifference: pair.dayDifference,
+    }));
+    for (const batch of batches(pairs)) {
+      await tx.insert(possibleDuplicates).values(batch);
     }
   });
 }

@@ -115,6 +115,10 @@ npm run db:migrate     # apply the migrations the database does not have yet
 skips those already applied, so running it again changes nothing. Run it after
 every update that brings new migrations. The data lives in a named Docker
 volume: `docker compose down` keeps it, `docker compose down -v` deletes it.
+The Compose project is always called `fbo-dev`, whatever the directory is
+named; `COMPOSE_PROJECT_NAME` or `docker compose -p <name>` still override it,
+for example to give parallel worktrees separate stacks; only one of them can
+listen on port 5433 at a time.
 
 The database tests in `npm test`, the browser tests in `npm run test:e2e` and
 `npm run verify` need the server running. They use their own databases,

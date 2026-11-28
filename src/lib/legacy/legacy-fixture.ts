@@ -819,7 +819,7 @@ export const DUP_BANK_CONTESTED = transactionId(209);
 export const DUP_SHEET_CLOSER = transactionId(210);
 export const DUP_SHEET_FARTHER = transactionId(211);
 /**
- * All four candidates are two days apart. The bank row with two candidates
+ * All three candidates are two days apart. The bank row with two candidates
  * would take the earlier spreadsheet row by booking date and position, but the
  * sum of candidate counts puts its pair with the later one first, so the
  * earlier spreadsheet row stays free for the bank row whose only candidate it

@@ -583,6 +583,82 @@ describe("runLegacyMigration", () => {
     expect(await rowCounts()).toEqual(before);
   });
 
+  it("writes more transactions than one insert batch holds", async () => {
+    // Copies of one spreadsheet row with its part, under new old IDs, so every
+    // batched table gets more rows than a single batch of the write takes.
+    const copies = 600;
+    await legacyPool.query(
+      `WITH copied AS (
+         INSERT INTO transactions
+         SELECT (jsonb_populate_record(NULL::transactions,
+                   to_jsonb(t) || jsonb_build_object('id', gen_random_uuid()))).*
+         FROM transactions t, generate_series(1, $2::int)
+         WHERE t.id = $1
+         RETURNING id
+       )
+       INSERT INTO transaction_splits
+         (transaction_id, category_id, amount_minor, label, reporting_class, manually_approved,
+          created_at, updated_at)
+       SELECT c.id, s.category_id, s.amount_minor, s.label, s.reporting_class, s.manually_approved,
+              s.created_at, s.updated_at
+       FROM copied c CROSS JOIN transaction_splits s
+       WHERE s.transaction_id = $1`,
+      [TX_SHEET_CASH, copies],
+    );
+
+    const outcome = await migrate();
+    expect(outcome.status).toBe("migrated");
+    expect(await rowCounts()).toEqual({
+      accounts: 2,
+      categories: 8,
+      account_map: 2,
+      category_map: 9,
+      transactions: LEGACY_TRANSACTIONS.length + copies,
+      transaction_parts: 8 + copies,
+      transaction_map: LEGACY_TRANSACTIONS.length + copies,
+      transaction_sources: LEGACY_TRANSACTIONS.length + copies,
+      classification_results: 3,
+      possible_duplicates: 1,
+    });
+    const linked = await newPool.query<{ parts: number; sources: number }>(`
+      SELECT (SELECT count(*)::int FROM transactions t
+              WHERE EXISTS (SELECT 1 FROM transaction_parts p WHERE p.transaction_id = t.id)) AS parts,
+             (SELECT count(*)::int FROM transactions t
+              JOIN legacy_transaction_sources s ON s.transaction_id = t.id) AS sources`);
+    const withParts = await legacyPool.query<{ count: number }>(
+      "SELECT count(DISTINCT transaction_id)::int AS count FROM transaction_splits",
+    );
+    expect(linked.rows[0]).toEqual({
+      parts: withParts.rows[0].count,
+      sources: LEGACY_TRANSACTIONS.length + copies,
+    });
+  });
+
+  it("rolls back every row when the write fails after the transactions are in", async () => {
+    // The pairs are written last, so failing there leaves every other table
+    // filled inside the write transaction until it rolls back.
+    await newPool.query(`
+      CREATE FUNCTION fail_on_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'injected write failure';
+      END
+      $$`);
+    await newPool.query(`
+      CREATE TRIGGER fail_on_insert BEFORE INSERT ON possible_duplicates
+      FOR EACH STATEMENT EXECUTE FUNCTION fail_on_insert()`);
+    try {
+      const outcome = await migrate();
+      expect(outcome.status).toBe("failed");
+      if (outcome.status === "failed") {
+        expect(outcome.message).toContain("injected write failure");
+      }
+    } finally {
+      await newPool.query("DROP TRIGGER fail_on_insert ON possible_duplicates");
+      await newPool.query("DROP FUNCTION fail_on_insert()");
+    }
+    expect(await rowCounts()).toEqual(NO_ROWS);
+  });
+
   it("refuses a second run and leaves the rows as they are", async () => {
     expect((await migrate()).status).toBe("migrated");
     const before = await rowCounts();

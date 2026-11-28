@@ -287,8 +287,9 @@ export const legacyTransactionSources = pgTable("legacy_transaction_sources", {
 
 /**
  * Classification results of the old version (suggestions of its classifiers),
- * kept with their old values, timestamps included, for later suggestions. The
- * old rule and proposal IDs have no foreign key.
+ * kept with their old values, timestamps included (to the millisecond, as a
+ * JavaScript Date carries them), for later suggestions. The old rule and
+ * proposal IDs have no foreign key.
  */
 export const legacyClassificationResults = pgTable("legacy_classification_results", {
   legacyId: uuid("legacy_id").$type<LegacyClassificationResultId>().primaryKey(),

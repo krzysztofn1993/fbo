@@ -138,7 +138,13 @@ const AmountSchema = z
   .transform((value) => BigInt(value));
 /** A calendar date, as `date::text` gives it. */
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-/** A `jsonb` object. */
+/**
+ * A `jsonb` object. `pg` returns it already parsed and the write stringifies
+ * it again, so a whole number beyond 2^53 would lose precision without a
+ * problem. The migration accepts this for `provider_source_metadata` and
+ * `provenance` because the old data was checked to hold no numbers there;
+ * read them as `::text` before reusing this for other data.
+ */
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 
 const AccountRecordSchema = z

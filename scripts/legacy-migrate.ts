@@ -1,5 +1,7 @@
-// Moves the active accounts and all categories of the old version into the
-// empty tables of the new one, once, and prints a summary.
+// Moves the active accounts, all categories and all transactions of the old
+// version into the empty tables of the new one, once, marks the pairs of
+// possible duplicates among the transactions, and prints a summary of counts
+// only (no descriptions or amounts).
 //
 // Needs DATABASE_URL (the new database), LEGACY_DATABASE_URL (a separate
 // database restored from the old version's dump) and
@@ -14,8 +16,7 @@
 
 import { readDatabaseUrl } from "../src/lib/db/config.ts";
 import { NonBlankSchema } from "../src/lib/env.ts";
-import type { MigrationReport } from "../src/lib/legacy/accounts-categories.ts";
-import { runLegacyMigration } from "../src/lib/legacy/migrate.ts";
+import { type MigrationReport, runLegacyMigration } from "../src/lib/legacy/migrate.ts";
 
 function fail(message: string): never {
   process.stderr.write(`${message}\n`);
@@ -26,9 +27,35 @@ function list(title: string, items: readonly string[]): string[] {
   return items.length === 0 ? [`${title}: none`] : [`${title}:`, ...items.map((item) => `  - ${item}`)];
 }
 
+/** `name count` pairs of a count per value, joined by commas. */
+function counts(byValue: Readonly<Record<string, number>>): string {
+  return Object.entries(byValue)
+    .map(([value, count]) => `${value} ${count}`)
+    .join(", ");
+}
+
+function formatTransactions(report: MigrationReport["transactions"]): string[] {
+  const pairs = report.possibleDuplicates;
+  const months = Object.keys(pairs.byMonth).length === 0 ? "none" : counts(pairs.byMonth);
+  return [
+    `Transactions: ${report.transactions} migrated (by source: ${counts(report.bySource)})`,
+    `Transaction parts: ${report.parts}`,
+    `Classification states: ${counts(report.byState)}`,
+    `Part labels: ${report.labelsKept} kept in labeled categories, ` +
+      `${report.labelsDropped} dropped outside them`,
+    `Old classification results: ${report.classificationResults} ` +
+      `(by status: ${counts(report.resultsByStatus)})`,
+    `Possible duplicate pairs (bank row ~ spreadsheet row): ${pairs.pairs} ` +
+      `(0 days without a competitor ${pairs.sameDayWithoutCompetitor}, ` +
+      `1-3 days without a competitor ${pairs.nearDateWithoutCompetitor}, ` +
+      `with a competitor ${pairs.withCompetitor})`,
+    `Possible duplicate pairs by month of the bank booking date: ${months}`,
+  ];
+}
+
 function formatReport(report: MigrationReport): string {
   const lines = [
-    "Accounts and categories migrated.",
+    "Accounts, categories and transactions migrated.",
     `Accounts: ${report.accountsMigrated} migrated, ${report.accountsSkipped} inactive skipped`,
     `Categories: ${report.rootCategories} root, ${report.subcategories} subcategories`,
     `Legacy map rows: ${report.accountMapRows} accounts, ${report.categoryMapRows} categories`,
@@ -58,6 +85,7 @@ function formatReport(report: MigrationReport): string {
       report.appendedSubcategories.map((entry) => `${entry.parentName} / ${entry.name}`),
     ),
     ...list("Layout file warnings", report.layoutWarnings),
+    ...formatTransactions(report.transactions),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -77,7 +105,7 @@ async function main(): Promise<void> {
     problems.push("LEGACY_CATEGORY_LAYOUT_FILE is not set.");
   }
   if (!newDatabase.ok || !legacyDatabase.ok || !layoutFile.success) {
-    fail(`Cannot migrate accounts and categories:\n${problems.join("\n")}`);
+    fail(`Cannot migrate from the old version:\n${problems.join("\n")}`);
   }
 
   const outcome = await runLegacyMigration({

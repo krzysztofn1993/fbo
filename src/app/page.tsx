@@ -49,6 +49,11 @@ async function SessionPanel() {
               Kategorie
             </Link>
           </li>
+          <li>
+            <Link href="/transactions" className={navLinkClassName}>
+              Transakcje
+            </Link>
+          </li>
         </ul>
       </nav>
     </div>

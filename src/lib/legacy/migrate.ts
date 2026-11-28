@@ -1,7 +1,9 @@
-// One run of the migration of accounts and categories from the old version:
-// read the layout file and the old database, translate in memory, then write
-// to the new database in one transaction. Any problem stops the run before the
-// write, and a failed write is rolled back, so nothing is left half-written.
+// One run of the migration from the old version: read the layout file and the
+// old database, translate the accounts and categories, then the transactions
+// that refer to them and the pairs of possible duplicates among those, in
+// memory, and write everything to the new database in one transaction. Any
+// problem stops the run before the write, and a failed write is rolled back,
+// so nothing is left half-written.
 //
 // Loaded by the `legacy:migrate` script under plain `node`, so it imports only
 // packages and relative `.ts` paths and uses only erasable syntax.
@@ -9,10 +11,17 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 
-import { type MigrationReport, translateAccountsAndCategories } from "./accounts-categories.ts";
+import {
+  type MigrationReport as AccountsCategoriesReport,
+  translateAccountsAndCategories,
+} from "./accounts-categories.ts";
 import { readCategoryLayoutFile } from "./category-layout.ts";
 import { type LegacySnapshotResult, readLegacySnapshot } from "./read.ts";
+import { type TransactionReport, translateTransactions } from "./transactions.ts";
 import { AlreadyMigratedError, writeMigrationPlan } from "./write.ts";
+
+/** What a run moved: the accounts and categories, and the transactions on them. */
+export type MigrationReport = AccountsCategoriesReport & { transactions: TransactionReport };
 
 export type MigrationOptions = {
   newDatabaseUrl: string;
@@ -121,6 +130,12 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
   if (!translation.ok) {
     return { status: "invalid", problems: translation.problems };
   }
+  // The transactions need the keys of the translated accounts and categories,
+  // so their problems show only once those translate cleanly.
+  const transactions = translateTransactions({ snapshot: read.snapshot, plan: translation.plan });
+  if (!transactions.ok) {
+    return { status: "invalid", problems: transactions.problems };
+  }
 
   const pool = new pg.Pool({ connectionString: options.newDatabaseUrl, max: 1 });
   const writeErrors = connectionErrorTrap();
@@ -129,7 +144,11 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
   pool.on("error", writeErrors.listener);
   pool.on("connect", (client) => client.on("error", writeErrors.listener));
   try {
-    await writeMigrationPlan(drizzle({ client: pool }), translation.plan);
+    await writeMigrationPlan(drizzle({ client: pool }), {
+      ...translation.plan,
+      transactions: transactions.transactions,
+      duplicates: transactions.duplicates,
+    });
   } catch (error) {
     if (error instanceof AlreadyMigratedError) {
       return { status: "refused", message: error.message };
@@ -142,5 +161,8 @@ export async function runLegacyMigration(options: MigrationOptions): Promise<Mig
     await pool.end().catch(() => undefined);
   }
 
-  return { status: "migrated", report: translation.report };
+  return {
+    status: "migrated",
+    report: { ...translation.report, transactions: transactions.report },
+  };
 }

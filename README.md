@@ -6,8 +6,9 @@ your own machine.
 The project is at an early stage: this repository holds the application
 scaffold, sign-in for the single administrator, a first domain rule, the
 database schema for accounts, categories and transactions, a one-time command
-that moves them from the old version, pages that list the accounts and the
-category tree, their tests, and a CI check.
+that moves them from the old version, pages that list the accounts, the
+category tree and the transactions with their details, their tests, and a CI
+check.
 
 ## Requirements
 
@@ -277,9 +278,9 @@ the bank row's booking date. It prints counts only, no descriptions or amounts.
 | `npm run auth:hash-password` | Print the `ADMIN_PASSWORD_HASH` line                                  |
 
 `npm run test:e2e` starts the production build on port 3100 with a test-only
-account and the `fbo_e2e` database filled with made-up accounts and
-categories, so run `npm run build` first and keep PostgreSQL running. The
-first run needs the browser: `npx playwright install chromium`.
+account and the `fbo_e2e` database filled with made-up accounts, categories
+and transactions, so run `npm run build` first and keep PostgreSQL running.
+The first run needs the browser: `npx playwright install chromium`.
 
 ## Stack
 

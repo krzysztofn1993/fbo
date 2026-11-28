@@ -8,7 +8,7 @@
 // `classification-state.ts`, never read from a column. Imports only packages
 // and relative `.ts` paths.
 
-import { asc, count, desc, eq, inArray, or } from "drizzle-orm";
+import { asc, count, eq, inArray, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { alias } from "drizzle-orm/pg-core";
 
@@ -150,7 +150,11 @@ export async function listTransactions(
     })
     .from(transactions)
     .innerJoin(accounts, eq(accounts.id, transactions.accountId))
-    .orderBy(desc(transactions.bookingDate), desc(transactions.id))
+    // NULLS LAST matches transactions_booking_date_id_idx, so the index serves the sort.
+    .orderBy(
+      sql`${transactions.bookingDate} DESC NULLS LAST`,
+      sql`${transactions.id} DESC NULLS LAST`,
+    )
     .limit(TRANSACTIONS_PAGE_SIZE)
     .offset((shown - 1) * TRANSACTIONS_PAGE_SIZE);
 

@@ -500,6 +500,11 @@ describe("translateTransactions", () => {
         "do not sum to its amount",
       ],
       [
+        "a part that goes the other way than the amount",
+        (row) => ({ parts: [part(row, { amountMinor: -1700n }), part(row, { amountMinor: 200n })] }),
+        "a part goes the other way than its amount",
+      ],
+      [
         "a part in a labeled category without a label",
         (row) => ({ parts: [part(row, { categoryId: LABELED })] }),
         "labeled category but has no label",

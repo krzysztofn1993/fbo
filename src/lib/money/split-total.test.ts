@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assertSplitTotal, InvalidSplitError } from "@/lib/money/split-total";
+import { assertSplitDirection, assertSplitTotal, InvalidSplitError } from "@/lib/money/split-total";
 
 // Runs the assertion and returns the error it throws, failing the test if it
 // does not throw an InvalidSplitError.
@@ -58,5 +58,64 @@ describe("assertSplitTotal", () => {
     expect(error.reason).toBe("no-parts");
     expect(error.expected).toBe(0n);
     expect(error.actual).toBe(0n);
+  });
+});
+
+// Runs the direction check and returns the error it throws, failing the test
+// if it does not throw an InvalidSplitError.
+function captureDirectionError(total: bigint, parts: readonly bigint[]): InvalidSplitError {
+  try {
+    assertSplitDirection(total, parts);
+  } catch (error) {
+    expect(error).toBeInstanceOf(InvalidSplitError);
+    return error as InvalidSplitError;
+  }
+  throw new Error("expected assertSplitDirection to throw");
+}
+
+describe("assertSplitDirection", () => {
+  it("accepts parts of an inflow that are all positive", () => {
+    expect(() => assertSplitDirection(100n, [60n, 40n])).not.toThrow();
+  });
+
+  it("accepts parts of an outflow that are all negative", () => {
+    expect(() => assertSplitDirection(-100n, [-60n, -40n])).not.toThrow();
+  });
+
+  it("accepts a zero part next to parts that go the way of the total", () => {
+    expect(() => assertSplitDirection(-100n, [-100n, 0n])).not.toThrow();
+    expect(() => assertSplitDirection(0n, [0n])).not.toThrow();
+  });
+
+  it("rejects a negative part of an inflow even when the parts sum to it", () => {
+    expect(() => assertSplitTotal(100n, [140n, -40n])).not.toThrow();
+    const error = captureDirectionError(100n, [140n, -40n]);
+    expect(error.name).toBe("InvalidSplitError");
+    expect(error.reason).toBe("direction-mismatch");
+    expect(error.expected).toBe(100n);
+    expect(error.actual).toBe(-40n);
+  });
+
+  it("rejects a positive part of an outflow and reports the first such part", () => {
+    const error = captureDirectionError(-100n, [-160n, 25n, 35n]);
+    expect(error.reason).toBe("direction-mismatch");
+    expect(error.actual).toBe(25n);
+  });
+
+  it("rejects non-zero parts of a zero total", () => {
+    const error = captureDirectionError(0n, [5n, -5n]);
+    expect(error.reason).toBe("direction-mismatch");
+    expect(error.actual).toBe(5n);
+  });
+
+  it("compares directions above Number.MAX_SAFE_INTEGER exactly", () => {
+    const big = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
+    expect(() => assertSplitDirection(-big, [-big - 1n, 1n])).toThrow(InvalidSplitError);
+    expect(() => assertSplitDirection(-big, [-big + 1n, -1n])).not.toThrow();
+  });
+
+  it("rejects an empty parts list", () => {
+    const error = captureDirectionError(-100n, []);
+    expect(error.reason).toBe("no-parts");
   });
 });

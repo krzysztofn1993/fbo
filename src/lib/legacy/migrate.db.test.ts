@@ -504,6 +504,17 @@ describe("runLegacyMigration", () => {
       "do not sum to its amount",
     ],
     [
+      "a part that goes the other way than the amount",
+      `WITH moved AS (
+         UPDATE transaction_splits SET amount_minor = amount_minor - 100 WHERE transaction_id = $1
+         RETURNING transaction_id, category_id, created_at, updated_at
+       )
+       INSERT INTO transaction_splits (transaction_id, category_id, amount_minor, created_at, updated_at)
+       SELECT transaction_id, category_id, 100, created_at, updated_at FROM moved`,
+      [TX_BANK_APRIL],
+      "a part goes the other way than its amount",
+    ],
+    [
       "a part in the labeled category without a label",
       "UPDATE transaction_splits SET label = NULL WHERE transaction_id = $1",
       [TX_SHEET_LABELED],

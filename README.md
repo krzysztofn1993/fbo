@@ -246,8 +246,9 @@ The run stops and writes nothing when a transaction has no account or is on an
 account that is not migrated, its currency differs from the account currency,
 a value is unknown (source kind, reporting class, classifier type, result
 status, reporting scope), a part or result is in a category that is not
-migrated, the parts do not sum exactly to the amount, a part in a category
-that takes labels has no label, a transaction has a note or is marked as a
+migrated, the parts do not sum exactly to the amount, a part goes the other
+way than the amount (a part of an outflow is positive or a part of an inflow is
+negative), a part in a category that takes labels has no label, a transaction has a note or is marked as a
 refund (the new version does not keep either yet), or a transaction without
 parts has a conflicting classification result (the old version showed it as
 needing review, the new rule would show it as unclassified).

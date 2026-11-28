@@ -34,7 +34,7 @@ import type {
   LegacySourceFileId,
   LegacyTransactionId,
 } from "../ids.ts";
-import { assertSplitTotal, InvalidSplitError } from "../money/split-total.ts";
+import { assertSplitDirection, assertSplitTotal, InvalidSplitError } from "../money/split-total.ts";
 import {
   CLASSIFICATION_STATES,
   type ClassificationState,
@@ -515,6 +515,14 @@ export function translateTransactions(
           throw error;
         }
         problems.push(`${transaction}: its parts do not sum to its amount.`);
+      }
+      try {
+        assertSplitDirection(row.amountMinor, partRows.map((part) => part.amountMinor));
+      } catch (error) {
+        if (!(error instanceof InvalidSplitError)) {
+          throw error;
+        }
+        problems.push(`${transaction}: a part goes the other way than its amount.`);
       }
     }
 

@@ -291,31 +291,38 @@ export const legacyTransactionSources = pgTable("legacy_transaction_sources", {
  * JavaScript Date carries them), for later suggestions. The old rule and
  * proposal IDs have no foreign key.
  */
-export const legacyClassificationResults = pgTable("legacy_classification_results", {
-  legacyId: uuid("legacy_id").$type<LegacyClassificationResultId>().primaryKey(),
-  transactionId: uuid("transaction_id")
-    .$type<TransactionId>()
-    .notNull()
-    .references(() => transactions.id, { onDelete: "cascade" }),
-  categoryId: uuid("category_id")
-    .$type<CategoryId>()
-    .references(() => categories.id, { onDelete: "restrict" }),
-  label: text("label"),
-  legacyRuleId: uuid("legacy_rule_id").$type<LegacyClassificationRuleId>(),
-  legacyRuleIds: jsonb("legacy_rule_ids").$type<LegacyClassificationRuleId[]>().notNull(),
-  classifierType: legacyClassifierType("classifier_type").notNull(),
-  classifierVersion: text("classifier_version").notNull(),
-  /** Confidence in basis points, 10 000 being certain. */
-  confidenceBps: integer("confidence_bps"),
-  reason: text("reason"),
-  legacyHistoricalProposalId: uuid(
-    "legacy_historical_proposal_id",
-  ).$type<LegacyHistoricalProposalId>(),
-  provenance: jsonb("provenance").$type<Record<string, unknown>>().notNull(),
-  status: legacyClassificationStatus("status").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-});
+export const legacyClassificationResults = pgTable(
+  "legacy_classification_results",
+  {
+    legacyId: uuid("legacy_id").$type<LegacyClassificationResultId>().primaryKey(),
+    transactionId: uuid("transaction_id")
+      .$type<TransactionId>()
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    categoryId: uuid("category_id")
+      .$type<CategoryId>()
+      .references(() => categories.id, { onDelete: "restrict" }),
+    label: text("label"),
+    legacyRuleId: uuid("legacy_rule_id").$type<LegacyClassificationRuleId>(),
+    legacyRuleIds: jsonb("legacy_rule_ids").$type<LegacyClassificationRuleId[]>().notNull(),
+    classifierType: legacyClassifierType("classifier_type").notNull(),
+    classifierVersion: text("classifier_version").notNull(),
+    /** Confidence in basis points, 10 000 being certain. */
+    confidenceBps: integer("confidence_bps"),
+    reason: text("reason"),
+    legacyHistoricalProposalId: uuid(
+      "legacy_historical_proposal_id",
+    ).$type<LegacyHistoricalProposalId>(),
+    provenance: jsonb("provenance").$type<Record<string, unknown>>().notNull(),
+    status: legacyClassificationStatus("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("legacy_classification_results_transaction_id_idx").on(t.transactionId),
+    index("legacy_classification_results_category_id_idx").on(t.categoryId),
+  ],
+);
 
 /**
  * Two transactions that may record the same money movement. A pair is only

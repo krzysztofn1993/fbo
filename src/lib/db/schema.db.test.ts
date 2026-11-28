@@ -440,6 +440,19 @@ describe("legacy transaction map", () => {
   });
 });
 
+describe("legacy classification results", () => {
+  it("has an index led by each foreign key, for cascades, restrict checks and lookups", async () => {
+    const result = await pool.query<{ column: string }>(`
+      SELECT a.attname AS column
+      FROM pg_index i
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+      WHERE i.indrelid = 'legacy_classification_results'::regclass`);
+    expect(result.rows.map((row) => row.column)).toEqual(
+      expect.arrayContaining(["transaction_id", "category_id"]),
+    );
+  });
+});
+
 describe("possible duplicates", () => {
   it("rejects a pair of a transaction with itself", async () => {
     const transaction = await insertTransaction();

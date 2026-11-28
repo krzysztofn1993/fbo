@@ -1,0 +1,2 @@
+CREATE INDEX "legacy_classification_results_transaction_id_idx" ON "legacy_classification_results" USING btree ("transaction_id");--> statement-breakpoint
+CREATE INDEX "legacy_classification_results_category_id_idx" ON "legacy_classification_results" USING btree ("category_id");

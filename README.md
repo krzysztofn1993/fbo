@@ -225,7 +225,8 @@ review, and otherwise the transaction is approved.
   connections are not moved.
 - The transactions are inserted in their order in the source: by booking date,
   the spreadsheet rows before the bank rows (manual ones last), the spreadsheet
-  rows by file, sheet and the importer's record order, the bank rows by
+  rows by file name, then by file (so two files of the same name stay apart),
+  sheet and the importer's record order, the bank rows by
   operation date, and the old ID last, so the new IDs keep that order.
 - Pairs of possible duplicates are marked, not removed: the old version kept
   both the spreadsheet and the bank rows for the months they overlap, so one

@@ -54,6 +54,7 @@ function candidate(seed: LegacyTransactionSeed): DuplicateCandidateRow {
     source: {
       sourceKind: seed.sourceKind as LegacySourceKind,
       sourceFileName: null,
+      legacySourceFileId: null,
       sourceSheet: seed.sourceSheet,
       sourceRecordIndex: seed.sourceRecordIndex,
     },

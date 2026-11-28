@@ -273,14 +273,15 @@ export type SourcePosition = {
   operationDate: string | null;
   source: Pick<
     NewTransactionSource,
-    "sourceKind" | "sourceFileName" | "sourceSheet" | "sourceRecordIndex"
+    "sourceKind" | "sourceFileName" | "legacySourceFileId" | "sourceSheet" | "sourceRecordIndex"
   >;
 };
 
 /**
  * Orders transactions by their position in the source: booking date; rows from
  * the spreadsheet before rows from the bank, manual ones last; in the
- * spreadsheet by file name, sheet and the importer's record index, in the bank
+ * spreadsheet by file name, then file ID (so two files of the same name do not
+ * interleave), sheet and the importer's record index, in the bank
  * by operation date (missing values last); the old ID breaks the last ties.
  * The old creation time is the import time, shared by a whole import, so it
  * plays no part. Inserted in this order, the new UUIDv7 IDs keep it.
@@ -299,6 +300,7 @@ export function compareSourcePosition(a: SourcePosition, b: SourcePosition): num
   if (rankA === SOURCE_RANK.legacy_excel) {
     byPlace =
       compareNullsLast(a.source.sourceFileName, b.source.sourceFileName, compareText) ||
+      compareNullsLast(a.source.legacySourceFileId, b.source.legacySourceFileId, compareText) ||
       compareNullsLast(a.source.sourceSheet, b.source.sourceSheet, compareText) ||
       compareNullsLast(a.source.sourceRecordIndex, b.source.sourceRecordIndex, (x, y) => x - y);
   } else if (rankA === SOURCE_RANK.bank_api) {

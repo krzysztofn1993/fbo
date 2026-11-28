@@ -4,6 +4,7 @@ import {
   LegacyAccountIdSchema,
   LegacyCategoryIdSchema,
   LegacyClassificationResultIdSchema,
+  LegacySourceFileIdSchema,
   LegacyTransactionIdSchema,
 } from "@/lib/ids";
 import type { MigrationPlan, NewCategory } from "@/lib/legacy/accounts-categories";
@@ -420,6 +421,22 @@ describe("translateTransactions", () => {
         tieA,
         tieB,
       ].map((row) => row.id),
+    );
+  });
+
+  it("keeps the rows of two files with the same name apart, by file ID", () => {
+    const fileA = LegacySourceFileIdSchema.parse("e0000000-0000-4000-8000-000000000001");
+    const fileB = LegacySourceFileIdSchema.parse("e0000000-0000-4000-8000-000000000002");
+    const aFirst = transaction({ sourceFileId: fileA, sourceRecordIndex: 0 });
+    const aThird = transaction({ sourceFileId: fileA, sourceRecordIndex: 2 });
+    const bSecond = transaction({ sourceFileId: fileB, sourceRecordIndex: 1 });
+    // A file without an ID comes after the files with one of the same name.
+    const noFile = transaction({ sourceFileId: null, sourceRecordIndex: 0 });
+
+    const { transactions } = translated(input({ transactions: [noFile, bSecond, aThird, aFirst] }));
+
+    expect(transactions.map((item) => item.legacyId)).toEqual(
+      [aFirst, aThird, bSecond, noFile].map((row) => row.id),
     );
   });
 
